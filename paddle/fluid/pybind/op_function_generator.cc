@@ -34,6 +34,7 @@
 // need to manually specify them in this map.
 std::map<std::string, std::set<std::string>> op_ins_map = {
     {"layer_norm", {"X", "Scale", "Bias"}},
+    {"layer_norm_v2", {"X", "Scale", "Bias"}},
     {"instance_norm", {"X", "Scale", "Bias"}},
     {"gru_unit", {"Input", "HiddenPrev", "Weight", "Bias"}},
     {"label_smooth", {"X", "PriorDist"}},
@@ -138,16 +139,16 @@ const char* OUT_DUPLICABLE_INITIALIZER_TEMPLATE = R"({"%s", ConstructDuplicableO
 const char* INPUT_INITIALIZER_TEMPLATE = R"({"%s", {%s}})";
 const char* INPUT_LIST_INITIALIZER_TEMPLATE = R"({"%s", %s})";
 
-const char* INPUT_INITIALIZER_TEMPLATE_WITH_NULL = R"(	
-    if (%s != nullptr) {	
-      ins["%s"] = {%s};	
-    }	
+const char* INPUT_INITIALIZER_TEMPLATE_WITH_NULL = R"(
+    if (%s != nullptr) {
+      ins["%s"] = {%s};
+    }
 )";
 
-const char* INPUT_INITIALIZER_TEMPLATE_WITH_NULL_LIST = R"(	
+const char* INPUT_INITIALIZER_TEMPLATE_WITH_NULL_LIST = R"(
     if (%s.size() != 0) {
-      ins["%s"] = %s;	
-    }	
+      ins["%s"] = %s;
+    }
 )";
 
 const char* OUTPUT_INITIALIZER_TEMPLATE_WITH_NULL = R"(
@@ -199,8 +200,8 @@ R"(
     imperative::NameVarBaseMap ins = %s;
     %s
     tracer->TraceOp("%s", ins, outs, attrs);
-    return %s; 
-  }   
+    return %s;
+  }
 })";
 
 const char* PYBIND_ITEM_TEMPLATE = R"(  %s.def("%s", &%s);)";
