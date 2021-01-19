@@ -203,7 +203,6 @@ __inline__ __device__ void cuLoadAddStridedInputs(
     const U *__restrict__ scale, const U *__restrict__ bias) {
   const int i1 = i1_block + thr_load_row_off;
   if (i1 >= i1_end) return;
-
   U curr_bias = bias[i1];
   U curr_scale = scale[i1];
   for (int k = 0; k < VPT; ++k) {
@@ -214,8 +213,10 @@ __inline__ __device__ void cuLoadAddStridedInputs(
       U curr_output = static_cast<U>(output[load_idx]);
       U curr_dout = static_cast<U>(dout[load_idx]);
       warp_buf1[write_idx] += curr_dout;
-      warp_buf2[write_idx] +=
-          curr_dout * (curr_output - curr_bias) / curr_scale;
+      warp_buf2[write_idx] += curr_dout * (curr_output - bias[i2]) / scale[i2];
+      // curr_dout * (curr_output);
+      // curr_dout * (curr_output - curr_bias);
+      // curr_dout * (curr_output - curr_bias) / curr_scale;
     }
   }
 }
@@ -353,8 +354,6 @@ __global__ void LayerNormV2BackwardComputeGradInput(
     U sum_loss1 = U(0);
     U sum_loss2 = U(0);
     const U c_invvar = rsqrt<U>(var[i1] + epsilon);
-    const U c_var = var[i1] + epsilon;
-
     const T *k_output = output + i1 * n2;
     const T *k_dout = dout + i1 * n2;
     constexpr int numx = BDIMX * BDIMY;
@@ -364,17 +363,16 @@ __global__ void LayerNormV2BackwardComputeGradInput(
       for (; l + 3 < n2; l += 4 * numx) {
         for (int k = 0; k < 4; ++k) {
           const U c_out = static_cast<U>(k_output[l + k]);
-
           const U c_loss = static_cast<U>(k_dout[l + k]);
           sum_loss1 += c_loss * gamma[l + k];
-          sum_loss2 += c_loss * (c_out - bias[l + k]) * c_var;
+          sum_loss2 += c_loss * (c_out - bias[l + k]);
         }
       }
       for (; l < n2; ++l) {
         const U c_out = static_cast<U>(k_output[l]);
         const U c_loss = static_cast<U>(k_dout[l]);
         sum_loss1 += c_loss * gamma[l];
-        sum_loss2 += c_loss * (c_out - bias[l]) * c_var;
+        sum_loss2 += c_loss * (c_out - bias[l]);
       }
     } else {
       int l = 4 * thrx;
@@ -383,14 +381,14 @@ __global__ void LayerNormV2BackwardComputeGradInput(
           const U c_out = static_cast<U>(k_output[l + k]);
           const U c_loss = static_cast<U>(k_dout[l + k]);
           sum_loss1 += c_loss;
-          sum_loss2 += c_loss * (c_out - bias[l + k]) * c_var;
+          sum_loss2 += c_loss * (c_out - bias[l + k]);
         }
       }
       for (; l < n2; ++l) {
         const U c_out = static_cast<U>(k_output[l]);
         const U c_loss = static_cast<U>(k_dout[l]);
         sum_loss1 += c_loss;
-        sum_loss2 += c_loss * (c_out - bias[l]) * c_var;
+        sum_loss2 += c_loss * (c_out - bias[l]);
       }
     }
     // intra-warp reductions
@@ -441,7 +439,7 @@ __global__ void LayerNormV2BackwardComputeGradInput(
         const U c_loss = static_cast<U>(k_dout[l]);
         U f_grad_input = fH * c_loss * gamma[l];
         f_grad_input -= sum_loss1;
-        f_grad_input -= (c_out - bias[l]) / gamma[l] * c_var * sum_loss2;
+        f_grad_input -= (c_out - bias[l]) / gamma[l] * sum_loss2;
         f_grad_input *= term1;
         k_grad_input[l] = static_cast<T>(f_grad_input);
       }
@@ -451,7 +449,7 @@ __global__ void LayerNormV2BackwardComputeGradInput(
         const U c_loss = static_cast<U>(k_dout[l]);
         U f_grad_input = fH * c_loss;
         f_grad_input -= sum_loss1;
-        f_grad_input -= (c_out - bias[l]) * c_var * sum_loss2;
+        f_grad_input -= (c_out - bias[l]) * sum_loss2;
         f_grad_input *= term1;
         k_grad_input[l] = static_cast<T>(f_grad_input);
       }
@@ -943,6 +941,8 @@ class LayerNormV2GradKernel<platform::CUDADeviceContext, T>
     auto matrix_dim = framework::flatten_to_2d(y_dims, begin_norm_axis);
     int batch_size = static_cast<int>(matrix_dim[0]);
     int feature_size = static_cast<int>(matrix_dim[1]);
+    VLOG(0) << "feature_size: " << feature_size;
+    VLOG(0) << "batch_size: " << batch_size;
 
     LayerNormV2Backward<T, U>(y_data, d_y_data, scale_data, bias_data, var_data,
                               d_x_data, d_scale_data, d_bias_data, epsilon,

@@ -280,6 +280,8 @@ class LayerNormV2GradOpMaker : public framework::SingleGradOpMaker<T> {
 
 // DECLARE_NO_NEED_BUFFER_VARS_INFERER(LayerNormV2GradNoNeedBufferVarInferer,
 //                                     "Bias");
+DECLARE_NO_NEED_BUFFER_VARS_INFERER(LayerNormV2GradNoNeedBufferVarInferer,
+                                    "Mean");
 
 }  // namespace operators
 }  // namespace paddle
