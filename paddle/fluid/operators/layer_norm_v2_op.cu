@@ -706,7 +706,7 @@ static void LayerNormV2Backward(const T *y, const T *d_y, const U *scale,
   }
 
   auto block_dim = GetDesiredBlockDim(batch_size);
-  VLOG(0) << "gradient flag" << gradient_flag;
+  VLOG(3) << "gradient flag" << gradient_flag;
   switch (gradient_flag) {
     case 1:  // d_x == nulptr, d_scale == nullptr, d_bias != nullptr
       switch (block_dim) {
@@ -912,37 +912,37 @@ class LayerNormV2GradKernel<platform::CUDADeviceContext, T>
     auto *bias = ctx.Input<Tensor>("Bias");
     auto *d_y = ctx.Input<Tensor>(framework::GradVarName("Y"));
 
-    VLOG(0) << "y_data";
+    VLOG(3) << "y_data";
     auto *y_data = y->data<T>();
-    VLOG(0) << "d_y_data";
+    VLOG(3) << "d_y_data";
     auto *d_y_data = d_y->data<T>();
-    VLOG(0) << "var_data";
+    VLOG(3) << "var_data";
     auto *var_data = var->data<U>();
-    VLOG(0) << "done 1";
+    VLOG(3) << "done 1";
 
-    VLOG(0) << "scale_data";
+    VLOG(3) << "scale_data";
     auto *scale_data = (scale == nullptr ? nullptr : scale->data<U>());
-    VLOG(0) << "bias_data";
+    VLOG(3) << "bias_data";
     auto *bias_data = (bias == nullptr ? nullptr : bias->data<U>());
-    VLOG(0) << "d_scale_data";
+    VLOG(3) << "d_scale_data";
     auto *d_scale_data =
         (d_scale == nullptr ? nullptr
                             : d_scale->mutable_data<U>(ctx.GetPlace()));
-    VLOG(0) << "d_bias_data";
+    VLOG(3) << "d_bias_data";
     auto *d_bias_data =
         (d_bias == nullptr ? nullptr : d_bias->mutable_data<U>(ctx.GetPlace()));
-    VLOG(0) << "d_x_data";
+    VLOG(3) << "d_x_data";
     auto *d_x_data =
         (d_x == nullptr ? nullptr : d_x->mutable_data<T>(ctx.GetPlace()));
-    VLOG(0) << "done 2";
+    VLOG(3) << "done 2";
 
     const auto &y_dims = y->dims();
     const auto begin_norm_axis = ctx.Attr<int>("begin_norm_axis");
     auto matrix_dim = framework::flatten_to_2d(y_dims, begin_norm_axis);
     int batch_size = static_cast<int>(matrix_dim[0]);
     int feature_size = static_cast<int>(matrix_dim[1]);
-    VLOG(0) << "feature_size: " << feature_size;
-    VLOG(0) << "batch_size: " << batch_size;
+    VLOG(3) << "feature_size: " << feature_size;
+    VLOG(3) << "batch_size: " << batch_size;
 
     LayerNormV2Backward<T, U>(y_data, d_y_data, scale_data, bias_data, var_data,
                               d_x_data, d_scale_data, d_bias_data, epsilon,
