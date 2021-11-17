@@ -1178,6 +1178,105 @@ PYBIND11_MODULE(core_noavx, m) {
       });
 #else
            })
+      .def("_share_filename_", [](LoDTensor &self) {
+       if ( !self.IsInitialized() || self.numel() == 0)
+         throw std::runtime_error("LoDTensor not initpr numel is 0."
+                 " could not pass to shared memory. ");
+
+       auto holder = self.Holder();
+       PADDLE_ENFORCE_EQ(
+           platform::is_cpu_place(holder->place()), true,
+           platform::errors::InvalidArgument(
+             "LoDTensor is not on CPU."
+             "Sharing memory only support CPU Tensor currently"));
+
+       auto* mmap_writer_allocation =
+         dynamic_cast<memory::allocation::MemoryMapWriterAllocation *>(
+           holder.get());
+
+       if (mmap_writer_allocation == nullptr) {
+         VLOG(6) << "LodTensor not in shared memory, "
+            "try to move it to shared memory.";
+
+         void *data_ptr = self.data<void>();
+         size_t data_size = self.numel() * framework::SizeOfType(self.type());
+
+         auto shared_writer_holder =
+             memory::allocation::AllocateMemoryMapWriterAllocation(
+                 data_size);
+
+         // maintain mmap fd set & backup ipc_name
+         const std::string &ipc_name = shared_writer_holder->ipc_name();
+         memory::allocation::MemoryMapFdSet::Instance().Insert(ipc_name);
+
+         // copy data & reset holder
+         memory::Copy(platform::CPUPlace(), shared_writer_holder->ptr(),
+                      platform::CPUPlace(), data_ptr, data_size);
+         self.ResetHolder(shared_writer_holder);
+         mmap_writer_allocation = shared_writer_holder.get();
+       }
+       int type_idx = static_cast<int>(self.type());
+
+       return py::make_tuple(mmap_writer_allocation->ipc_name(),
+                             mmap_writer_allocation->size(),
+                             type_idx, vectorize(self.dims()), self.lod());
+       }, R"DOC(
+           Serialize CPU lod tensor in shared memory to tuple. 
+           If the tensor is not in shared memory, we will copy it first.
+
+           Returns:
+               tuple: contrains ipc name, data size, data type, 
+                      tensor dims and lod imformation.
+
+           Examples:
+               .. code-block:: python
+
+                 import paddle
+                 tensor = paddle.ones([3,3])
+                 metainfo = tensor.value().get_tensor()._share_filename_()
+
+       )DOC" )
+      .def("_new_shared_filename", [](py::tuple t) {  // __setstate__
+        if (t.size() != 5)
+          throw std::runtime_error("Invalid LoDTensor state!");
+
+        // 1. Create a new C++ instance
+        LoDTensor tensor;
+
+        // 2. Rebuild Allocation
+        const std::string &ipc_name = t[0].cast<std::string>();
+        size_t size = t[1].cast<size_t>();
+        auto shared_reader_holder =
+          memory::allocation::RebuildMemoryMapReaderAllocation(
+            ipc_name, size);
+
+        // 3. Maintain global fd set
+        VLOG(3) << "LoDTensor ipc name: " << ipc_name;
+        memory::allocation::MemoryMapFdSet::Instance().Insert(ipc_name);
+
+        // 4. Rebuild LoDTensor
+        tensor.ResetHolderWithType(shared_reader_holder,
+          static_cast<proto::VarType::Type>(t[2].cast<int>()));
+        tensor.Resize(make_ddim(t[3].cast<std::vector<int>>()));
+        tensor.set_lod(t[4].cast<framework::LoD>());
+
+        return tensor;
+        },  R"DOC(
+           Deserialize CPU lod tensor from shared memory. 
+
+           Params:
+               tuple: contrains ipc name, data size, data type, 
+                      tensor dims and lod imformation.
+
+           Examples:
+               .. code-block:: python
+
+                 import paddle
+                 tensor = paddle.ones([3,3])
+                 metainfo = tensor.value().get_tensor()._share_filename_()
+                 tensor_from_shared = paddle.to_tensor(paddle.fluid.core.LoDTensor._new_shared_filename(metainfo))
+
+        )DOC" )
       .def(py::pickle(
           [](const LoDTensor &t) {  // __getstate__
             auto holder = t.Holder();

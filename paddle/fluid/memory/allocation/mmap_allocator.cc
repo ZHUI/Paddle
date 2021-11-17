@@ -65,9 +65,9 @@ std::string GetIPCName() {
 std::shared_ptr<MemoryMapWriterAllocation> AllocateMemoryMapWriterAllocation(
     size_t size) {
   const std::string &ipc_name = GetIPCName();
+  // TODO(@ZHUI): support win32
   int flags = O_RDWR | O_CREAT;
-
-  int fd = shm_open(ipc_name.c_str(), flags, 0644);
+  int fd = shm_open(ipc_name.c_str(), flags, 0600);
   PADDLE_ENFORCE_NE(
       fd, -1, platform::errors::Unavailable("File descriptor %s open failed",
                                             ipc_name.c_str()));
@@ -86,12 +86,16 @@ std::shared_ptr<MemoryMapWriterAllocation> AllocateMemoryMapWriterAllocation(
 
 std::shared_ptr<MemoryMapReaderAllocation> RebuildMemoryMapReaderAllocation(
     const std::string &ipc_name, size_t size) {
-  int fd = shm_open(ipc_name.c_str(), O_RDONLY, 0644);
+  // TODO(@ZHUI): support win32
+  int flags = O_RDWR | O_CREAT;
+  flags &= ~O_CREAT;
+
+  int fd = shm_open(ipc_name.c_str(), flags, 0600);
   PADDLE_ENFORCE_NE(
       fd, -1, platform::errors::Unavailable("File descriptor %s open failed",
                                             ipc_name.c_str()));
-
-  void *ptr = mmap(NULL, size, PROT_READ, MAP_SHARED, fd, 0);
+  // pass
+  void *ptr = mmap(nullptr, size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
   PADDLE_ENFORCE_NE(ptr, MAP_FAILED,
                     platform::errors::Unavailable(
                         "Memory map failed when rebuild shared memory."));
