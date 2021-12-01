@@ -28,6 +28,16 @@ namespace paddle {
 namespace memory {
 namespace allocation {
 
+
+// class CudaAllocation : public Allocation {
+//  public:
+//   explicit CudaAllocation(void *ptr, size_t size, int device_index)
+//       : Allocation(ptr, size, platform::CUDAPlace(device_index)) {}
+//
+//   ~CudaAllocation() override;
+// };
+//
+
 class MemoryMapWriterAllocation : public Allocation {
  public:
   explicit MemoryMapWriterAllocation(void *ptr, size_t size,
@@ -42,6 +52,7 @@ class MemoryMapWriterAllocation : public Allocation {
  private:
   std::string ipc_name_;
 };
+
 
 class MemoryMapReaderAllocation : public Allocation {
  public:

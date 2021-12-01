@@ -58,6 +58,7 @@ std::string GetIPCName() {
   handle += std::to_string(getpid());
 #endif
   handle += "_";
+  // use global counter, not random device ?
   handle += std::to_string(rd());
   return handle;
 }

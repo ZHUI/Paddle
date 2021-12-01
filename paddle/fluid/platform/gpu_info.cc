@@ -567,6 +567,8 @@ class RecordedCudaMallocHelper {
     auto result = cudaMalloc(ptr, size);
 #endif
     if (result == gpuSuccess) {
+      VLOG(0) << "cudaMalloc successed: " << "\t" << ptr;
+      VLOG(0) << "size: " << "\t" << size;
       cur_size_.fetch_add(size);
       STAT_INT_ADD("STAT_gpu" + std::to_string(dev_id_) + "_mem_size", size);
       return gpuSuccess;
