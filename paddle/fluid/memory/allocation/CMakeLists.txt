@@ -15,8 +15,10 @@ endif()
 
 if (WITH_GPU)
   nv_library(cuda_allocator SRCS cuda_allocator.cc DEPS allocator cuda_device_guard)
-  nv_library(thread_local_allocator SRCS thread_local_allocator.cc DEPS allocator)
   nv_library(pinned_allocator SRCS pinned_allocator.cc DEPS allocator)
+  nv_library(stream_safe_cuda_allocator SRCS stream_safe_cuda_allocator.cc DEPS allocator)
+  nv_library(thread_local_allocator SRCS thread_local_allocator.cc DEPS allocator)
+
   cc_test(thread_local_allocator_test SRCS thread_local_allocator_test.cc DEPS thread_local_allocator)
   if(CUDA_VERSION GREATER_EQUAL 10.2)
     nv_library(cuda_virtual_mem_allocator SRCS cuda_virtual_mem_allocator.cc DEPS dynload_cuda)
@@ -25,8 +27,10 @@ endif()
 
 if (WITH_ROCM)
   hip_library(cuda_allocator SRCS cuda_allocator.cc DEPS allocator cuda_device_guard)
-  hip_library(thread_local_allocator SRCS thread_local_allocator.cc DEPS allocator)
   hip_library(pinned_allocator SRCS pinned_allocator.cc DEPS allocator)
+  hip_library(stream_safe_cuda_allocator SRCS stream_safe_cuda_allocator.cc DEPS allocator)
+  hip_library(thread_local_allocator SRCS thread_local_allocator.cc DEPS allocator)
+  
   cc_test(thread_local_allocator_test SRCS thread_local_allocator_test.cc DEPS thread_local_allocator)
 endif()
 
@@ -38,12 +42,14 @@ endif()
 cc_library(retry_allocator SRCS retry_allocator.cc DEPS allocator)
 
 if (WITH_GPU OR WITH_ROCM)
-    set(AllocatorFacadeDeps gpu_info cuda_allocator pinned_allocator cuda_device_guard thread_local_allocator)
+    set(AllocatorFacadeDeps gpu_info cuda_allocator pinned_allocator cuda_device_guard thread_local_allocator stream_safe_cuda_allocator)
     if(CUDA_VERSION GREATER_EQUAL 10.2)
       list(APPEND AllocatorFacadeDeps cuda_virtual_mem_allocator)
     endif()
 elseif(WITH_XPU)
     set(AllocatorFacadeDeps xpu_info)
+elseif(WITH_IPU)
+    set(AllocatorFacadeDeps ipu_info)
 elseif(WITH_ASCEND)
     set(AllocatorFacadeDeps ascend_npu_info)
 else ()
@@ -121,3 +127,19 @@ if(NOT WIN32)
 endif(NOT WIN32)
 
 cc_library(cuda_ipc_allocator SRCS cuda_ipc_allocator.cc DEPS allocator)
+if(WITH_GPU AND WITH_TESTING)
+  nv_test(naive_best_fit_base_ptr_test SRCS base_ptr_test.cu DEPS malloc gpu_info)
+  set_tests_properties(naive_best_fit_base_ptr_test PROPERTIES 
+                       ENVIRONMENT "FLAGS_allocator_strategy=naive_best_fit;
+                                    FLAGS_use_stream_safe_cuda_allocator=true;")
+                                    
+  nv_test(auto_growth_base_ptr_test SRCS base_ptr_test.cu DEPS malloc gpu_info)
+  set_tests_properties(auto_growth_base_ptr_test PROPERTIES 
+                       ENVIRONMENT "FLAGS_allocator_strategy=auto_growth;
+                                    FLAGS_use_stream_safe_cuda_allocator=true;")
+
+  nv_test(thread_local_base_ptr_test SRCS base_ptr_test.cu DEPS malloc gpu_info)
+  set_tests_properties(thread_local_base_ptr_test PROPERTIES 
+                       ENVIRONMENT "FLAGS_allocator_strategy=thread_local;
+                                    FLAGS_use_stream_safe_cuda_allocator=true;")
+endif()

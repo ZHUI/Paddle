@@ -25,8 +25,8 @@ limitations under the License. */
 #include "paddle/fluid/memory/detail/memory_block.h"
 #include "paddle/fluid/memory/detail/system_allocator.h"
 #include "paddle/fluid/platform/cpu_info.h"
-#include "paddle/fluid/platform/gpu_info.h"
-#include "paddle/fluid/platform/npu_info.h"
+#include "paddle/fluid/platform/device/gpu/gpu_info.h"
+#include "paddle/fluid/platform/device/npu/npu_info.h"
 
 namespace paddle {
 namespace memory {
@@ -45,6 +45,7 @@ class BuddyAllocator {
   void Free(void* ptr);
   // Release the unused memory pool, a real free operation for the OS.
   uint64_t Release();
+  void* BasePtr(void* ptr);
   size_t Used();
   size_t GetMinChunkSize();
   size_t GetMaxChunkSize();

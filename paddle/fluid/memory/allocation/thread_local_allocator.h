@@ -20,7 +20,7 @@
 #include "paddle/fluid/memory/allocation/allocator.h"
 #include "paddle/fluid/memory/detail/buddy_allocator.h"
 #include "paddle/fluid/memory/detail/system_allocator.h"
-#include "paddle/fluid/platform/gpu_info.h"
+#include "paddle/fluid/platform/device/gpu/gpu_info.h"
 
 namespace paddle {
 namespace memory {
@@ -30,8 +30,9 @@ class ThreadLocalAllocatorImpl;
 
 class ThreadLocalAllocation : public Allocation {
  public:
-  ThreadLocalAllocation(void* ptr, size_t size, platform::Place place)
-      : Allocation(ptr, size, place) {}
+  ThreadLocalAllocation(void* ptr, void* base_ptr, size_t size,
+                        platform::Place place)
+      : Allocation(ptr, base_ptr, size, place) {}
 
   void SetThreadLocalAllocatorImpl(
       std::shared_ptr<ThreadLocalAllocatorImpl> allocator) {
