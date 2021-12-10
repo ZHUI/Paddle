@@ -61,6 +61,7 @@ limitations under the License. */
 #include "paddle/fluid/framework/version.h"
 #include "paddle/fluid/imperative/layer.h"
 #include "paddle/fluid/memory/allocation/allocator_strategy.h"
+#include "paddle/fluid/memory/allocation/cuda_ipc_allocator.h"
 #include "paddle/fluid/memory/allocation/mmap_allocator.h"
 #include "paddle/fluid/operators/activation_op.h"
 #include "paddle/fluid/operators/common_infer_shape_functions.h"
@@ -796,7 +797,7 @@ PYBIND11_MODULE(core_noavx, m) {
            py::arg("array"), py::arg("place"), py::arg("zero_copy") = false,
            R"DOC(
         Set the data of LoDTensor on place with given numpy array.
-        
+
         Args:
           lod (numpy.ndarray): The data to set.
           place (CPUPlace|CUDAPlace|XPUPlace|CUDAPinnedPlace|NPUPlace): The place where the
@@ -877,41 +878,41 @@ PYBIND11_MODULE(core_noavx, m) {
 
   // TODO(cql): add reference: en_user_guide_lod_tensor
   py::class_<LoDTensor, framework::Tensor>(m, "LoDTensor", R"DOC(
-    LoDTensor is a Tensor with optional LoD (Level of Details) information, 
-    it can be used for variable-length sequences, 
+    LoDTensor is a Tensor with optional LoD (Level of Details) information,
+    it can be used for variable-length sequences,
     see :ref:`user_guide_lod_tensor` for details.
 
     LoDTensor can be converted to numpy array using :code:`numpy.array(lod_tensor)`.
 
-    You can skip the following explanation if you don't need to know details 
+    You can skip the following explanation if you don't need to know details
     of LoDTensor.
 
-    The following two examples show how to use LODtensor to represent 
+    The following two examples show how to use LODtensor to represent
     variable-length sequences.
-    
+
     Example 1:
-    
-    Suppose x is a LoDTensor representing a variable-length sequence. 
-    It contains two logical subsequences, the length of first logical sequence 
-    is 2 (e.g., number of samples is 2), the length of second logical sequence 
-    is 3, and the total length is 5. The data of the first logical sequence is 
-    [1, 2], [3, 4], and the data of the second logical sequence is [5, 6], 
-    [7, 8], [9, 10]. The data dimension of each sample is 2. So, the final 
-    shape of the LoDTensor is [5, 2], of which 5 is the total length and 2 is 
+
+    Suppose x is a LoDTensor representing a variable-length sequence.
+    It contains two logical subsequences, the length of first logical sequence
+    is 2 (e.g., number of samples is 2), the length of second logical sequence
+    is 3, and the total length is 5. The data of the first logical sequence is
+    [1, 2], [3, 4], and the data of the second logical sequence is [5, 6],
+    [7, 8], [9, 10]. The data dimension of each sample is 2. So, the final
+    shape of the LoDTensor is [5, 2], of which 5 is the total length and 2 is
     the dimension of each sample.
-    
-    Logically, we can represent the variable-length sequence in two ways: one 
-    is in the form of recursive sequence lengths, that is, 
-    x.recursive_sequence_lengths=[[2, 3]]; the other is in the form of offsets, 
-    that is, x.lod=[[0, 2, 2+3]]. These two representations are equivalent, and 
-    you can set and retrieve recursive_sequence_lengths or LoD through the 
+
+    Logically, we can represent the variable-length sequence in two ways: one
+    is in the form of recursive sequence lengths, that is,
+    x.recursive_sequence_lengths=[[2, 3]]; the other is in the form of offsets,
+    that is, x.lod=[[0, 2, 2+3]]. These two representations are equivalent, and
+    you can set and retrieve recursive_sequence_lengths or LoD through the
     corresponding interfaces of LoDTensor introduced later.
 
-    Actually, in order to access sequence faster, Paddle uses offset to store 
-    different lengths of sequences. 
-    Therefore, the operations on recursive_sequence_lengths will be converted 
+    Actually, in order to access sequence faster, Paddle uses offset to store
+    different lengths of sequences.
+    Therefore, the operations on recursive_sequence_lengths will be converted
     to the operations on LoD eventually.
-    
+
     .. code-block:: python
 
       y.data = [[1, 2], [3, 4],
@@ -926,18 +927,18 @@ PYBIND11_MODULE(core_noavx, m) {
 
     Example 2:
 
-    LoD may have more than one level (for example, a paragraph may have more 
-    than one sentence and a sentence may have more than one word). Suppose y 
-    is a LoDTensor and its lod_level is 2. 
-    From level = 0, there are two logical sequences, the length of which is 
-    2 and 1, respectively, indicating that the first logical sequence contains 
-    two sub-sequences and the second logical sequence contains one sub-sequence. 
-    From level = 1, the lengths of two sub-sequences contained by the first 
-    logical sequence is 2 and 2, and the length of sub-sequence contained by 
+    LoD may have more than one level (for example, a paragraph may have more
+    than one sentence and a sentence may have more than one word). Suppose y
+    is a LoDTensor and its lod_level is 2.
+    From level = 0, there are two logical sequences, the length of which is
+    2 and 1, respectively, indicating that the first logical sequence contains
+    two sub-sequences and the second logical sequence contains one sub-sequence.
+    From level = 1, the lengths of two sub-sequences contained by the first
+    logical sequence is 2 and 2, and the length of sub-sequence contained by
     the second logical sequence is 3.
-      
-    Therefore, the LoDTensor is represented in the form of recursive sequence 
-    lengths as y.recursive_sequence_lengths=[[2,1], [2,2,3]]; and equally, in 
+
+    Therefore, the LoDTensor is represented in the form of recursive sequence
+    lengths as y.recursive_sequence_lengths=[[2,1], [2,2,3]]; and equally, in
     the form of offset, it is represented as y.lod=[[0,2,3], [0,2,4,7]].
 
     .. code-block:: python
@@ -1047,7 +1048,7 @@ PYBIND11_MODULE(core_noavx, m) {
 
            Args:
                 recursive_sequence_lengths (list[list[int]]): The recursive sequence lengths.
-           
+
            Returns:
                 None.
 
@@ -1077,7 +1078,7 @@ PYBIND11_MODULE(core_noavx, m) {
 
            Returns:
                list[list[int]]: The lod of the LoDTensor.
-           
+
            Examples:
                .. code-block:: python
 
@@ -1100,7 +1101,7 @@ PYBIND11_MODULE(core_noavx, m) {
              return new_lod;
            },
            R"DOC(
-           Return the recursive sequence lengths corresponding to of the LodD 
+           Return the recursive sequence lengths corresponding to of the LodD
            of the LoDTensor.
 
            Returns:
@@ -1178,9 +1179,113 @@ PYBIND11_MODULE(core_noavx, m) {
       });
 #else
            })
+      .def("_share_cuda", [](LoDTensor self) {
+        // pass
+        if ( !self.IsInitialized() || self.numel() == 0)
+         throw std::runtime_error("LoDTensor not initpr numel is 0."
+                 " could not pass to shared memory. ");
+        // pass
+       auto holder = self.Holder();
+       PADDLE_ENFORCE_EQ(
+           platform::is_gpu_place(holder->place()), true,
+           platform::errors::InvalidArgument(
+             "LoDTensor is not on GPU."
+             "Share cuda only support GPU Tensor,"
+             " share filename is for CPU tensor."));
+
+        void * base_ptr = self.data<void>();
+        VLOG(6) << "Tensor BasePtr:" << "\t" << base_ptr;
+        size_t data_size = self.numel() * framework::SizeOfType(self.type());
+
+        cudaIpcMemHandle_t handle;
+        PADDLE_ENFORCE_CUDA_SUCCESS(cudaIpcGetMemHandle(&handle, base_ptr));
+        /* void * dev = nullptr;
+           PADDLE_ENFORCE_CUDA_SUCCESS(cudaIpcOpenMemHandle(
+                &dev, handle, cudaIpcMemLazyEnablePeerAccess));
+           VLOG(0) << "cudaIpcOpenMemHandle: " << "\t" << dev;
+
+           _event_handle = PyBytes_FromStringAndSize(
+           (char *)&ipc_event_handle, CUDA_IPC_HANDLE_SIZE);
+
+           char * _handle_storage = (char*)malloc(CUDA_IPC_HANDLE_SIZE);
+           memcpy(_handle_storage, (char *)&handle, CUDA_IPC_HANDLE_SIZE);
+
+           VLOG(0) << CUDA_IPC_HANDLE_SIZE;
+
+           for(int i= 0; i < int(CUDA_IPC_HANDLE_SIZE); i++){
+               VLOG(0) << i << "\t" << (int)_handle_storage[i] ;
+           }
+        */
+        auto _handle = py::bytes(reinterpret_cast<char *>(&handle),
+                (py::ssize_t) CUDA_IPC_HANDLE_SIZE);
+
+        // TODO(ZHUI): use cuda event.
+        const auto &device_id = paddle::platform::GetCurrentDeviceId();
+        auto stream = paddle::platform::stream::get_current_stream(device_id);
+        stream->Synchronize();
+
+        int type_idx = static_cast<int>(self.type());
+
+        return py::make_tuple(_handle,
+                data_size, type_idx,
+                vectorize(self.dims()),
+                self.lod(), device_id);
+      }, R"DOC(pass)DOC" )
+      .def("_new_shared_cuda", [](py::tuple t) {
+        if (t.size() != 6)
+          throw std::runtime_error("Invalid LoDTensor"
+                  " state for shared cuda tensor!");
+
+        // 1. Create a new C++ instance
+        LoDTensor tensor;
+
+        // 2. Rebuild Allocation from handle
+        const std::string &handle = t[0].cast<std::string>();
+        /*
+          auto c_str_handle = handle.c_str();
+          for(int i= 0; i < int(CUDA_IPC_HANDLE_SIZE); i++){
+              VLOG(0) << i << "\t" << (int)c_str_handle[i];
+          }
+        */
+        auto device_id = t[5].cast<int>();
+        VLOG(6) << "gey ipc base ptr";
+        auto base_ptr =  memory::allocation::GetIpcBasePtr(handle);
+
+        size_t size = t[1].cast<size_t>();
+        VLOG(6) << "constructing shared holder";
+        auto dev = base_ptr.get();
+        auto shared_reader_holder = std::make_shared<
+            memory::allocation::CudaIpcAllocation>(
+                dev, size, device_id, std::move(base_ptr));
+
+        // 4. Rebuild LoDTensor
+        tensor.ResetHolderWithType(shared_reader_holder,
+          static_cast<proto::VarType::Type>(t[2].cast<int>()));
+        tensor.Resize(make_ddim(t[3].cast<std::vector<int>>()));
+        tensor.set_lod(t[4].cast<framework::LoD>());
+
+        VLOG(6) << "cuda tensor reconstructed!";
+        return tensor;
+        },  R"DOC(
+           Deserialize GPU lod tensor from cudaIpcMemHandle.
+
+           Params:
+               tuple: contrains handle, data size, data type,
+                      tensor dims, lod information, device index.
+
+           Examples:
+               .. code-block:: python
+
+                 import paddle
+                 tensor = paddle.ones([3,3])
+                 metainfo = tensor.value().get_tensor()._share_filename_()
+                 tensor_from_shared = paddle.to_tensor(paddle.fluid.core.LoDTensor._new_shared_cuda(metainfo))
+
+        )DOC" )
+
       .def("_share_filename_", [](LoDTensor &self) {
        if ( !self.IsInitialized() || self.numel() == 0)
-         throw std::runtime_error("LoDTensor not initpr numel is 0."
+         throw std::runtime_error("LoDTensor not initialized or numel is 0."
                  " could not pass to shared memory. ");
 
        auto holder = self.Holder();
@@ -1221,11 +1326,11 @@ PYBIND11_MODULE(core_noavx, m) {
                              mmap_writer_allocation->size(),
                              type_idx, vectorize(self.dims()), self.lod());
        }, R"DOC(
-           Serialize CPU lod tensor in shared memory to tuple. 
+           Serialize CPU lod tensor in shared memory to tuple.
            If the tensor is not in shared memory, we will copy it first.
 
            Returns:
-               tuple: contrains ipc name, data size, data type, 
+               tuple: contrains ipc name, data size, data type,
                       tensor dims and lod imformation.
 
            Examples:
@@ -1262,10 +1367,10 @@ PYBIND11_MODULE(core_noavx, m) {
 
         return tensor;
         },  R"DOC(
-           Deserialize CPU lod tensor from shared memory. 
+           Deserialize CPU lod tensor from shared memory.
 
            Params:
-               tuple: contrains ipc name, data size, data type, 
+               tuple: contrains ipc name, data size, data type,
                       tensor dims and lod imformation.
 
            Examples:
@@ -1489,7 +1594,7 @@ All parameter, weight, gradient are variables in Paddle.
       .def("find_var", &Scope::FindVar, py::arg("name"),
            R"DOC(
            Find variable named :code:`name` in the current scope or
-           its parent scope. Return None if not found. 
+           its parent scope. Return None if not found.
 
            Args:
                name (str): the variable name.
@@ -1618,12 +1723,12 @@ All parameter, weight, gradient are variables in Paddle.
         R"DOC(
              Prune the backward part of a program, mostly called in
              program.clone(for_test=True).
-              
+
              Args:
                    program (ProgramDesc): The original program.
 
              Returns:
-                   tuple(ProgramDesc, map<int, int>): The first part is 
+                   tuple(ProgramDesc, map<int, int>): The first part is
                    the pruned program desc, and the second part is a map
                    which contains the id pair of pruned block and corresponding
                    origin block.
@@ -2381,7 +2486,7 @@ All parameter, weight, gradient are variables in Paddle.
            },
            py::arg("tensor"), R"DOC(
              Append a LoDensor to LoDTensorArray.
-              
+
              Args:
                    tensor (LoDTensor): The LoDTensor to be appended.
 
@@ -2784,9 +2889,9 @@ All parameter, weight, gradient are variables in Paddle.
                 Default 100.
 
                 .. note::
-                    1. If you fetch data when calling the 'run', the ParallelExecutor 
-                    will clean up the temp variables at the end of the current iteration. 
-                    2. In some NLP model, it may cause the GPU memory is insufficient, 
+                    1. If you fetch data when calling the 'run', the ParallelExecutor
+                    will clean up the temp variables at the end of the current iteration.
+                    2. In some NLP model, it may cause the GPU memory is insufficient,
                     in this case, you should reduce `num_iteration_per_drop_scope`.
 
                 Examples:
@@ -3301,7 +3406,7 @@ All parameter, weight, gradient are variables in Paddle.
                 synchronous batch normalization which synchronizes the mean
                 and variance through multi-devices in training phase.
                 Current implementation doesn't support FP16 training and CPU.
-                And only synchronous on one machine, not all machines. 
+                And only synchronous on one machine, not all machines.
                 Default is False.
 
                 Examples:
@@ -3339,9 +3444,9 @@ All parameter, weight, gradient are variables in Paddle.
           R"DOC((bool, optional): memory opitimize aims to save total memory
                 consumption, set to True to enable it.
 
-                Default None. None means framework would choose to use or not use 
-                this strategy automatically. Currently, None means that it is 
-                enabled when GC is disabled, and disabled when GC is enabled. 
+                Default None. None means framework would choose to use or not use
+                this strategy automatically. Currently, None means that it is
+                enabled when GC is disabled, and disabled when GC is enabled.
                 True means enabling and False means disabling. Default is None.
 
                 Examples:
@@ -3354,7 +3459,7 @@ All parameter, weight, gradient are variables in Paddle.
 
                         build_strategy = static.BuildStrategy()
                         build_strategy.memory_optimize = True
-                
+
                 )DOC")
       .def_property(
           "is_distribution",

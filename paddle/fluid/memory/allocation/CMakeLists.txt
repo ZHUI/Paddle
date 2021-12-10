@@ -119,3 +119,5 @@ if(NOT WIN32)
   cc_library(mmap_allocator SRCS mmap_allocator.cc DEPS allocator)
   cc_test(mmap_allocator_test SRCS mmap_allocator_test.cc DEPS mmap_allocator allocator)
 endif(NOT WIN32)
+
+cc_library(cuda_ipc_allocator SRCS cuda_ipc_allocator.cc DEPS allocator)

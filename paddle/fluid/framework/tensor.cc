@@ -76,6 +76,8 @@ void* Tensor::mutable_data(const platform::Place& place,
     // Reset holder first before re-allocate to save memory
     holder_.reset();
     holder_ = memory::AllocShared(place, size);
+    VLOG(6) << "Tensor mutable_data ptr:"
+            << "\t" << holder_->ptr();
     offset_ = 0;
   }
   return reinterpret_cast<void*>(reinterpret_cast<uintptr_t>(holder_->ptr()) +

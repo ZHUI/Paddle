@@ -44,6 +44,20 @@ MemoryMapReaderAllocation::~MemoryMapReaderAllocation() {
   /* Here we do not pay attention to the result of shm_unlink,
      because the memory mapped file may have been cleared due to the
      MemoryMapFdSet::Clear() */
+
+  // Code of DataLoader subprocess:
+  //
+  //    core._array_to_share_memory_tensor(b)
+  //    out_queue.put((idx, tensor_list, structure))
+  //    core._remove_tensor_list_mmap_fds(tensor_list)
+
+  /* If the tensor in already in the send queue, the tensor will be
+   * deconstructed by the function. If the tensor not send yet, it
+   * will be cleared by MemoryMapFdSet::Clear().
+   * If the `_remove_tensor_list_mmap_fds` have be interrupted, the
+   * tensor will be cleared by both methods.
+   * */
+
   shm_unlink(this->ipc_name().c_str());
   MemoryMapFdSet::Instance().Remove(this->ipc_name());
   VLOG(3) << "~MemoryMapReaderAllocation: " << this->ipc_name();
@@ -58,6 +72,7 @@ std::string GetIPCName() {
   handle += std::to_string(getpid());
 #endif
   handle += "_";
+  // use global counter, not random device ?
   handle += std::to_string(rd());
   return handle;
 }
