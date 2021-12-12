@@ -46,7 +46,7 @@ std::shared_ptr<void> GetIpcBasePtr(std::string handle) {
   void *baseptr = nullptr;
   auto ipc_handle =
       reinterpret_cast<const cudaIpcMemHandle_t *>(handle.c_str());
-  PADDLE_ENFORCE_CUDA_SUCCESS(cudaIpcOpenMemHandle(
+  PADDLE_ENFORCE_GPU_SUCCESS(cudaIpcOpenMemHandle(
       &baseptr, *ipc_handle, cudaIpcMemLazyEnablePeerAccess));
   // Close ipc handle on the same device.
   int device_id = platform::GetCurrentDeviceId();
@@ -54,7 +54,7 @@ std::shared_ptr<void> GetIpcBasePtr(std::string handle) {
   auto sp = std::shared_ptr<void>(baseptr, [handle, device_id](void *ptr) {
     platform::CUDADeviceGuard guard(device_id);
     std::lock_guard<std::mutex> lock(ipc_mutex_);
-    PADDLE_ENFORCE_CUDA_SUCCESS(cudaIpcCloseMemHandle(ptr));
+    PADDLE_ENFORCE_GPU_SUCCESS(cudaIpcCloseMemHandle(ptr));
     ipc_handle_to_baseptr_.erase(handle);
     VLOG(6) << "cudaIpcCloseMemHandle for ptr:"
             << "\t" << ptr;
@@ -67,7 +67,7 @@ std::shared_ptr<void> GetIpcBasePtr(std::string handle) {
 
 CudaIpcAllocation::~CudaIpcAllocation() {
   // platform::CUDADeviceGuard  guard(device_id_);
-  // PADDLE_ENFORCE_CUDA_SUCCESS(cudaIpcCloseMemHandle(this->ptr()));
+  // PADDLE_ENFORCE_GPU_SUCCESS(cudaIpcCloseMemHandle(this->ptr()));
   shared_ptr_.reset();
   VLOG(6) << "tensor deleted cudaIpcCloseMemHandle for ptr:"
           << "\t" << this->ptr();

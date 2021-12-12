@@ -1236,9 +1236,9 @@ PYBIND11_MODULE(core_noavx, m) {
         size_t data_size = self.numel() * framework::SizeOfType(self.type());
 
         cudaIpcMemHandle_t handle;
-        PADDLE_ENFORCE_CUDA_SUCCESS(cudaIpcGetMemHandle(&handle, base_ptr));
+        PADDLE_ENFORCE_GPU_SUCCESS(cudaIpcGetMemHandle(&handle, base_ptr));
         /* void * dev = nullptr;
-           PADDLE_ENFORCE_CUDA_SUCCESS(cudaIpcOpenMemHandle(
+           PADDLE_ENFORCE_GPU_SUCCESS(cudaIpcOpenMemHandle(
                 &dev, handle, cudaIpcMemLazyEnablePeerAccess));
            VLOG(0) << "cudaIpcOpenMemHandle: " << "\t" << dev;
 
