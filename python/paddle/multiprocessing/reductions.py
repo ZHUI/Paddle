@@ -87,9 +87,10 @@ def rebuild_lodtensor_filename(cls, ipc_name, size, type_idx, dims, lod):
     return lodtensor
 
 
-def rebuild_cuda_tensor(cls, handle, size, type_idx, dims, lod, device_idx):
+def rebuild_cuda_tensor(cls, handle, offset_bytes, size, type_idx, dims, lod,
+                        device_idx):
     lodtensor = cls._new_shared_cuda(
-        (handle, size, type_idx, dims, lod, device_idx))
+        (handle, offset_bytes, size, type_idx, dims, lod, device_idx))
     return lodtensor
 
 
