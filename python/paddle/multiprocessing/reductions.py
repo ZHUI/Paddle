@@ -26,6 +26,8 @@ import multiprocessing
 from multiprocessing.util import register_after_fork
 from multiprocessing.reduction import ForkingPickler
 
+from collections import OrderedDict
+
 
 def _py_supported_check():
     if not sys.version_info >= (3, 4):
@@ -35,6 +37,44 @@ def _py_supported_check():
         return False
 
     return True
+
+
+class LRUSharedCache(OrderedDict):
+    def __init__(self):
+        self.limit = 128
+        self._after_fork()
+        register_after_fork(self, LRUSharedCache._after_fork)
+
+    def _after_fork(self):
+        self.lock = threading.Lock()
+
+    def get(self, key):
+        with self.lock:
+            try:
+                value = super().pop(key)
+                super().__setitem__(key, value)
+                return value
+            except KeyError:
+                return None
+
+    def __setitem__(self, key, value):
+        with self.lock:
+            try:
+                super().__delitem__(key)
+            except KeyError:
+                if len(self) >= self.limit:
+                    super().popitem(last=False)
+            super().__setitem__(key, value)
+
+
+shared_cache = LRUSharedCache()
+
+
+def cuda_from_cache(key):
+    lodtensor = shared_cache.get(key)
+    if lodtensor is None:
+        return None
+    return lodtensor
 
 
 #TODO: support cuda ipc event
@@ -89,8 +129,16 @@ def rebuild_lodtensor_filename(cls, ipc_name, size, type_idx, dims, lod):
 
 def rebuild_cuda_tensor(cls, handle, offset_bytes, size, type_idx, dims, lod,
                         device_idx):
-    lodtensor = cls._new_shared_cuda(
-        (handle, offset_bytes, size, type_idx, dims, lod, device_idx))
+    cache_tensor = cuda_from_cache((handle, offset_bytes))
+    if cache_tensor is None:
+        lodtensor = cls._new_shared_cuda(
+            (handle, offset_bytes, size, type_idx, dims, lod, device_idx))
+        shared_cache[(handle, offset_bytes)] = lodtensor
+    else:
+        lodtensor = paddle.fluid.core.LoDTensor()
+        lodtensor._share_buffer_with(cache_tensor,
+                                     (size, type_idx, dims, lod, device_idx))
+
     return lodtensor
 
 

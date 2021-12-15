@@ -1219,6 +1219,7 @@ PYBIND11_MODULE(core_noavx, m) {
            })
       .def("_share_cuda", [](LoDTensor self) {
         // pass
+        VLOG(6) << "Share cuda start";
         if ( !self.IsInitialized() || self.numel() == 0)
          throw std::runtime_error("LoDTensor not initpr numel is 0."
                  " could not pass to shared memory. ");
@@ -1267,14 +1268,31 @@ PYBIND11_MODULE(core_noavx, m) {
         stream->Synchronize();
 
         int type_idx = static_cast<int>(self.type());
-
+        VLOG(6) << "Cast cuda tensor to ipc over";
         return py::make_tuple(_handle,
                 (py::size_t) offset_bytes,
                 data_size, type_idx,
                 vectorize(self.dims()),
                 self.lod(), device_id);
       }, R"DOC(pass)DOC" )
+      .def("_share_buffer_with",
+              [](LoDTensor &self, const LoDTensor src, py::tuple t) {
+        size_t size = t[0].cast<size_t>();
+        auto device_id = t[4].cast<int>();
+        auto shared_reader_holder = std::make_shared<
+            memory::allocation::Allocation>(
+                src.Holder()->ptr(),
+                src.Holder()->base_ptr(),
+                size,
+                platform::CUDAPlace(device_id));
+        self.ResetHolderWithType(shared_reader_holder,
+          static_cast<proto::VarType::Type>(t[1].cast<int>()));
+        self.Resize(make_ddim(t[2].cast<std::vector<int>>()));
+        self.set_lod(t[3].cast<framework::LoD>());
+        VLOG(6) << "tensor buffer shared!";
+        }, R"DOC(sss)DOC")
       .def("_new_shared_cuda", [](py::tuple t) {
+        VLOG(6) << "New shared cuda start";
         if (t.size() != 7)
           throw std::runtime_error("Invalid LoDTensor"
                   " state for shared cuda tensor!");
@@ -1293,7 +1311,7 @@ PYBIND11_MODULE(core_noavx, m) {
           }
         */
         auto device_id = t[6].cast<int>();
-        VLOG(6) << "gey ipc base ptr";
+        VLOG(6) << "get ipc base ptr";
         auto base_ptr =  memory::allocation::GetIpcBasePtr(handle);
 
         size_t size = t[2].cast<size_t>();
