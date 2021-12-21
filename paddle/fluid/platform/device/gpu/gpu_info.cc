@@ -256,6 +256,18 @@ class RecordedGpuMallocHelper {
   }
 #endif
 
+#ifdef PADDLE_WITH_TESTING
+  void *GetBasePtr(void *ptr) {
+    auto it = gpu_ptrs.upper_bound(ptr);
+
+    if (it == gpu_ptrs.begin()) {
+      return nullptr;
+    }
+
+    return *(--it);
+  }
+#endif
+
   bool GetMemInfo(size_t *avail, size_t *total, size_t *actual_avail,
                   size_t *actual_total) {
     {
@@ -323,10 +335,8 @@ class RecordedGpuMallocHelper {
   static std::once_flag once_flag_;
   static std::vector<std::unique_ptr<RecordedGpuMallocHelper>> instances_;
 
-#ifdef PADDLE_WITH_TESTING
-  std::set<void *> gpu_ptrs;
-#endif
-};  // NOLINT
+  std::set<void *> gpu_ptrs;  // just for testing
+};                            // NOLINT
 
 std::once_flag RecordedGpuMallocHelper::once_flag_;
 std::vector<std::unique_ptr<RecordedGpuMallocHelper>>
