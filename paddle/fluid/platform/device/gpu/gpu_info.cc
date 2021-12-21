@@ -256,18 +256,6 @@ class RecordedGpuMallocHelper {
   }
 #endif
 
-#ifdef PADDLE_WITH_TESTING
-  void *GetBasePtr(void *ptr) {
-    auto it = gpu_ptrs.upper_bound(ptr);
-
-    if (it == gpu_ptrs.begin()) {
-      return nullptr;
-    }
-
-    return *(--it);
-  }
-#endif
-
   bool GetMemInfo(size_t *avail, size_t *total, size_t *actual_avail,
                   size_t *actual_total) {
     {
