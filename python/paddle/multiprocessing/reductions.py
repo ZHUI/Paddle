@@ -113,11 +113,14 @@ def reduce_tensor(tensor):
             "Refusing to serialize non-leaf tensor which not stop_gradient, you can deteach it!"
         )
     # TODO: add serializing name and  hooks check
-    if tensor.place.is_cpu_place() or tensor.place.is_gpu_place():
+    if tensor.place.is_cpu_place() or tensor.place.is_gpu_place(
+    ) or tensor.place.is_cuda_pinned_place():
         metadata = (tensor.size, tensor.stop_gradient)
         return (rebuild_tensor, (type(tensor), lodtensor, metadata))
     else:
-        raise ValueError("Not support xpu tensor for now!")
+        raise ValueError(
+            "Only support tensors of CPU/CUDA/CUDAPinned Place, Not support %s for now!"
+            % tensor.place)
 
     # Don't serialize hooks
 
@@ -149,9 +152,10 @@ def rebuild_lodtensor_empty(cls):
 
 
 def reduce_lodtensor(lodtensor):
-    if lodtensor._place().is_cpu_place():
+    if lodtensor._place().is_cpu_place() or lodtensor._place(
+    ).is_cuda_pinned_place():
         # Default use share filename stratege
-        metadata = lodtensor._share_filename_(
+        metadata = lodtensor._share_filename(
         )  # ipc_name, size, type_idx, dims, lod
         rebuild = rebuild_lodtensor_filename
         # TODO, maintain reference for lodtensor

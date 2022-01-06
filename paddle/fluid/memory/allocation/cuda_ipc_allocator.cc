@@ -41,8 +41,8 @@ std::shared_ptr<void> GetIpcBasePtr(std::string handle) {
     auto baseptr = iter->second.lock();
     if (baseptr) return baseptr;
   }
-  // The IpcMemHandle can only open once for the same handle, so here we cache
-  // it.
+  // The IpcMemHandle can only open once for the same handle,
+  // so here we cache it here.
   void *baseptr = nullptr;
   auto ipc_handle =
       reinterpret_cast<const cudaIpcMemHandle_t *>(handle.c_str());
@@ -50,7 +50,7 @@ std::shared_ptr<void> GetIpcBasePtr(std::string handle) {
       &baseptr, *ipc_handle, cudaIpcMemLazyEnablePeerAccess));
   // Close ipc handle on the same device.
   int device_id = platform::GetCurrentDeviceId();
-  // Add hooks on deleter ptr.
+  // Add deleter to close ipc handle.
   auto sp = std::shared_ptr<void>(baseptr, [handle, device_id](void *ptr) {
     platform::CUDADeviceGuard guard(device_id);
     std::lock_guard<std::mutex> lock(ipc_mutex_);
@@ -66,46 +66,10 @@ std::shared_ptr<void> GetIpcBasePtr(std::string handle) {
 }
 
 CudaIpcAllocation::~CudaIpcAllocation() {
-  // platform::CUDADeviceGuard  guard(device_id_);
-  // PADDLE_ENFORCE_GPU_SUCCESS(cudaIpcCloseMemHandle(this->ptr()));
   shared_ptr_.reset();
   VLOG(6) << "tensor deleted cudaIpcCloseMemHandle for ptr:"
           << "\t" << this->ptr();
 }
-
-CudaIpcHandleSet &CudaIpcHandleSet::Instance() {  // NOLINT
-  static CudaIpcHandleSet set;
-  return set;
-}
-
-void CudaIpcHandleSet::Insert(const std::string &ipc_handle) {
-  std::lock_guard<std::mutex> guard(mtx_);
-  handle_set_.emplace(ipc_handle);
-  VLOG(3) << "PID: " << getpid() << ", CudaIpcHandleSet: insert " << ipc_handle
-          << ", set size: " << handle_set_.size();
-}
-
-void CudaIpcHandleSet::Remove(const std::string &ipc_handle) {
-  std::lock_guard<std::mutex> guard(mtx_);
-  handle_set_.erase(ipc_handle);
-  VLOG(3) << "PID: " << getpid() << ", CudaIpcHandleSet: erase " << ipc_handle
-          << ", set size: " << handle_set_.size();
-}
-
-void CudaIpcHandleSet::Clear() {
-  VLOG(3) << "PID: " << getpid() << ", CudaIpcHandleSet: set size - "
-          << handle_set_.size();
-  std::lock_guard<std::mutex> guard(mtx_);
-  for (auto fd : handle_set_) {
-    int rlt = shm_unlink(fd.c_str());
-    if (rlt == 0) {
-      VLOG(3) << "PID: " << getpid() << ", CudaIpcHandleSet: clear " << fd;
-    }
-  }
-  handle_set_.clear();
-}
-
-CudaIpcHandleSet::~CudaIpcHandleSet() { Clear(); }
 
 }  // namespace allocation
 }  // namespace memory

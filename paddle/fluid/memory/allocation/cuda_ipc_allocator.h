@@ -48,25 +48,6 @@ class CudaIpcAllocation : public Allocation {
   std::shared_ptr<void> shared_ptr_;
 };
 
-class CudaIpcHandleSet {
- public:
-  static CudaIpcHandleSet &Instance();  // NOLINT
-
-  void Insert(const std::string &ipc_handle);
-
-  void Remove(const std::string &ipc_handle);
-
-  void Clear();
-
-  ~CudaIpcHandleSet();
-
- private:
-  CudaIpcHandleSet() = default;
-
-  std::unordered_set<std::string> handle_set_;
-  std::mutex mtx_;
-};
-
 }  // namespace allocation
 }  // namespace memory
 }  // namespace paddle
