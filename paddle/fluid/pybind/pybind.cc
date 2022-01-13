@@ -1390,40 +1390,40 @@ PYBIND11_MODULE(core_noavx, m) {
               "LoDTensor is not on CPU."
               "Sharing memory only support CPU Tensor currently"));
 
-        auto* mmap_writer_allocation =
-          dynamic_cast<memory::allocation::MemoryMapWriterAllocation *>(
+        auto* mmap_allocation =
+          dynamic_cast<memory::allocation::RefcountedMemoryMapAllocation *>(
             holder.get());
-
-        if (mmap_writer_allocation == nullptr) {
+        // If the tensor is not shared, allocate memory map allocation.
+        if (mmap_allocation == nullptr) {
           VLOG(6) << "LodTensor not in shared memory, "
              "try to move it to shared memory.";
 
           void *data_ptr = self.data<void>();
           size_t data_size = self.numel() * framework::SizeOfType(self.type());
 
-          auto shared_writer_holder =
-              memory::allocation::AllocateMemoryMapWriterAllocation(
+          int flags = memory::allocation::MAPPED_SHAREDMEM |
+              memory::allocation::MAPPED_EXCLUSIVE;
+          std::string handle = memory::allocation::GetIPCName();
+          auto shared_holder =
+              memory::allocation::AllocateRefcountedMemoryMapAllocation(
+                      handle, flags,
                   data_size);
-
-          // maintain mmap fd set & backup ipc_name
-          const std::string &ipc_name = shared_writer_holder->ipc_name();
-          memory::allocation::MemoryMapFdSet::Instance().Insert(ipc_name);
 
           // copy data & reset holder
           if (platform::is_cuda_pinned_place(holder->place())) {
-            memory::Copy(platform::CPUPlace(), shared_writer_holder->ptr(),
+            memory::Copy(platform::CPUPlace(), shared_holder->ptr(),
                        platform::CUDAPinnedPlace(), data_ptr, data_size);
           } else {
-            memory::Copy(platform::CPUPlace(), shared_writer_holder->ptr(),
+            memory::Copy(platform::CPUPlace(), shared_holder->ptr(),
                        platform::CPUPlace(), data_ptr, data_size);
           }
-          self.ResetHolder(shared_writer_holder);
-          mmap_writer_allocation = shared_writer_holder.get();
+          self.ResetHolder(shared_holder);
+          mmap_allocation = shared_holder.get();
         }
         int type_idx = static_cast<int>(self.type());
 
-        return py::make_tuple(mmap_writer_allocation->ipc_name(),
-                              mmap_writer_allocation->size(),
+        return py::make_tuple(mmap_allocation->ipc_name(),
+                              mmap_allocation->size(),
                               type_idx, vectorize(self.dims()), self.lod());
        }, R"DOC(
            Serialize CPU lod tensor in shared memory to tuple.
@@ -1451,16 +1451,17 @@ PYBIND11_MODULE(core_noavx, m) {
         // 2. Rebuild Allocation
         const std::string &ipc_name = t[0].cast<std::string>();
         size_t size = t[1].cast<size_t>();
-        auto shared_reader_holder =
-          memory::allocation::RebuildMemoryMapReaderAllocation(
-            ipc_name, size);
+        int flags = memory::allocation::MAPPED_SHAREDMEM |
+        memory::allocation::MAPPED_NOCREATE;
 
-        // 3. Maintain global fd set
+        auto shared_holder =
+          memory::allocation::AllocateRefcountedMemoryMapAllocation(
+            ipc_name, flags, size);
+
         VLOG(6) << "LoDTensor ipc name: " << ipc_name;
-        memory::allocation::MemoryMapFdSet::Instance().Insert(ipc_name);
 
-        // 4. Rebuild LoDTensor
-        tensor.ResetHolderWithType(shared_reader_holder,
+        // 3. Rebuild LoDTensor
+        tensor.ResetHolderWithType(shared_holder,
           static_cast<proto::VarType::Type>(t[2].cast<int>()));
         tensor.Resize(make_ddim(t[3].cast<std::vector<int>>()));
         tensor.set_lod(t[4].cast<framework::LoD>());
@@ -1470,8 +1471,8 @@ PYBIND11_MODULE(core_noavx, m) {
            Deserialize CPU lod tensor from shared memory.
 
            Params:
-               tuple: contrains ipc name, data size, data type,
-                      tensor dims and lod imformation.
+               tuple: contrains ipc file name, data size, data type,
+                      tensor dims and lod information.
 
            Examples:
                .. code-block:: python
@@ -1580,6 +1581,7 @@ All parameter, weight, gradient are variables in Paddle.
            })
       .def("get_float",
            [](const Variable &var) -> float { return var.Get<float>(); })
+      // get_tensor
       .def("get_tensor",
            [](Variable &self) -> LoDTensor * {
              return self.GetMutable<LoDTensor>();
