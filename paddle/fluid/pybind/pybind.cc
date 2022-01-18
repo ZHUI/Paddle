@@ -1228,7 +1228,7 @@ PYBIND11_MODULE(core_noavx, m) {
       .def("_share_buffer_with",
               [](LoDTensor &self, const LoDTensor src, py::tuple t) {
        auto* cuda_ipc_allocation =
-         dynamic_cast<memory::allocation::CudaIpcAllocation *>(
+         dynamic_cast<memory::allocation::CudaIpcRecvAllocation *>(
            src.Holder().get());
 
        PADDLE_ENFORCE_NOT_NULL(cuda_ipc_allocation,
@@ -1271,19 +1271,23 @@ PYBIND11_MODULE(core_noavx, m) {
                  metainfo = tensor.value().get_tensor()._share_cuda()
 
        )DOC")
-      .def("_share_cuda", [](LoDTensor self) {
+      .def("_share_cuda", [](LoDTensor &self) {
        VLOG(6) << "Share cuda start";
-       if ( !self.IsInitialized() || self.numel() == 0)
+       if ( !self.IsInitialized() || self.numel() == 0 ) {
          throw std::runtime_error("LoDTensor not initpr numel is 0."
                  " could not pass to shared memory. ");
+       }
+        int type_idx = static_cast<int>(self.type());
+        size_t data_size = self.numel() * framework::SizeOfType(self.type());
 
-       auto holder = self.Holder();
+       auto holder = self.MoveMemoryHolder();
        PADDLE_ENFORCE_EQ(
            platform::is_gpu_place(holder->place()), true,
            platform::errors::InvalidArgument(
              "LoDTensor is not on GPU."
              "Share cuda only support GPU Tensor,"
              " share filename is for CPU tensor."));
+
 
         void * base_ptr = holder->base_ptr();  // self.data<void>();
         ptrdiff_t offset_bytes = reinterpret_cast<char*>(
@@ -1297,18 +1301,34 @@ PYBIND11_MODULE(core_noavx, m) {
 
         auto _handle = py::bytes(reinterpret_cast<char *>(&handle),
                 (py::ssize_t) CUDA_IPC_HANDLE_SIZE);
-
-        // TODO(ZHUI): use cuda event, to avoid sync.
         const auto &device_id = paddle::platform::GetCurrentDeviceId();
-        auto stream = paddle::platform::stream::get_current_stream(device_id);
-        stream->Synchronize();
 
-        int type_idx = static_cast<int>(self.type());
-        size_t data_size = self.numel() * framework::SizeOfType(self.type());
+        auto sent_data_allocation =
+                memory::allocation::GetNewRefCountedSentData(
+                        holder->ptr(),  data_size, device_id);
+        VLOG(6) << "GetNewRefCountedSentData";
+        sent_data_allocation->sent_data()->set_original_ptr(std::move(holder));
+        VLOG(6) << "set_original_ptr done";
+        self.ResetHolder(sent_data_allocation);
+        VLOG(6) << "rest holder";
+
+        auto _ref_counter = py::bytes(
+                (sent_data_allocation->sent_data()->handle()).c_str());
+        int64_t _ref_counter_offset =
+            sent_data_allocation->sent_data()->offset();
+        VLOG(6) << "_ref_counter: " <<
+            sent_data_allocation->sent_data()->handle();
+        VLOG(6) << "_ref_counter_offset: " << _ref_counter_offset;
+
+
+        // // TODO(ZHUI): use cuda event, to avoid sync.
 
         VLOG(6) << "Cast cuda tensor to ipc over";
-        return py::make_tuple(_handle,
+        return py::make_tuple(
+                _handle,
                 (py::size_t) offset_bytes,
+                _ref_counter,
+                _ref_counter_offset,
                 data_size, type_idx,
                 vectorize(self.dims()),
                 self.lod(), device_id);
@@ -1330,7 +1350,7 @@ PYBIND11_MODULE(core_noavx, m) {
       .def("_new_shared_cuda", [](py::tuple t) {
         VLOG(6) << "New shared cuda start";
 
-        if (t.size() != 7)
+        if (t.size() != 9)
           throw std::runtime_error("Invalid LoDTensor"
                   " meta info for shared cuda tensor!");
 
@@ -1339,24 +1359,31 @@ PYBIND11_MODULE(core_noavx, m) {
         // 2. Rebuild Allocation from handle
         const std::string &handle = t[0].cast<std::string>();
         ptrdiff_t offset_bytes = (ptrdiff_t)t[1].cast<int64_t>();
+        const std::string &ref_counter_handle = t[2].cast<std::string>();
+        int64_t ref_counter_offset = t[3].cast<int64_t>();
         VLOG(6) << "recv offset_bytes:\t" << offset_bytes;
-        auto device_id = t[6].cast<int>();
+        auto device_id = t[8].cast<int>();
         VLOG(6) << "get ipc base ptr";
         auto base_ptr =  memory::allocation::GetIpcBasePtr(handle);
-        size_t size = t[2].cast<size_t>();
+        size_t size = t[4].cast<size_t>();
         VLOG(6) << "constructing shared holder";
         void * dev = base_ptr.get();
         dev = reinterpret_cast<char*>(dev) + offset_bytes;
 
+        auto ctx = new memory::allocation::IpcDeleterContext();
+        ctx->ref_counter_handle = std::move(ref_counter_handle);
+        ctx->ref_counter_offset = ref_counter_offset;
+        ctx->device_id = device_id;
+
         auto shared_reader_holder = std::make_shared<
-            memory::allocation::CudaIpcAllocation>(
-                dev, size, device_id, std::move(base_ptr));
+            memory::allocation::CudaIpcRecvAllocation>(
+                dev, size, device_id, std::move(base_ptr), ctx);
 
         // 3. Rebuild LoDTensor
         tensor.ResetHolderWithType(shared_reader_holder,
-          static_cast<proto::VarType::Type>(t[3].cast<int>()));
-        tensor.Resize(make_ddim(t[4].cast<std::vector<int>>()));
-        tensor.set_lod(t[5].cast<framework::LoD>());
+          static_cast<proto::VarType::Type>(t[5].cast<int>()));
+        tensor.Resize(make_ddim(t[6].cast<std::vector<int>>()));
+        tensor.set_lod(t[7].cast<framework::LoD>());
 
         VLOG(6) << "cuda tensor reconstructed!";
         return tensor;

@@ -22,6 +22,7 @@ import sys
 import warnings
 import math
 import threading
+import weakref
 import multiprocessing
 from multiprocessing.util import register_after_fork
 from multiprocessing.reduction import ForkingPickler
@@ -53,7 +54,7 @@ class LRUSharedCache(OrderedDict):
             try:
                 value = super().pop(key)
                 super().__setitem__(key, value)
-                return value
+                return value()
             except KeyError:
                 return None
 
@@ -64,7 +65,7 @@ class LRUSharedCache(OrderedDict):
             except KeyError:
                 if len(self) >= self.limit:
                     super().popitem(last=False)
-            super().__setitem__(key, value)
+            super().__setitem__(key, weakref.ref(value))
 
 
 shared_cache = LRUSharedCache()
@@ -130,12 +131,13 @@ def rebuild_lodtensor_filename(cls, ipc_name, size, type_idx, dims, lod):
     return lodtensor
 
 
-def rebuild_cuda_tensor(cls, handle, offset_bytes, size, type_idx, dims, lod,
-                        device_idx):
+def rebuild_cuda_tensor(cls, handle, offset_bytes, ref_handle, ref_offset, size,
+                        type_idx, dims, lod, device_idx):
     cache_tensor = cuda_from_cache((handle, offset_bytes))
     if cache_tensor is None:
         lodtensor = cls._new_shared_cuda(
-            (handle, offset_bytes, size, type_idx, dims, lod, device_idx))
+            (handle, offset_bytes, ref_handle, ref_offset, size, type_idx, dims,
+             lod, device_idx))
         shared_cache[(handle, offset_bytes)] = lodtensor
     else:
         lodtensor = paddle.fluid.core.LoDTensor()
