@@ -18,7 +18,7 @@
 
 #include <atomic>
 #include <memory>
-#include <mutex>  // NOLINT
+#include <mutex>
 #include <string>
 #include <unordered_set>
 #include <utility>
@@ -33,7 +33,6 @@ std::string GetIPCName();
 
 static constexpr int64_t mmap_alignment = 64;
 
-//  MAPPED_SHARED = 1,
 enum MappedModes {
   MAPPED_SHAREDMEM = 1,
   MAPPED_EXCLUSIVE = 2,

@@ -38,7 +38,6 @@ std::string GetIPCName() {
   handle += std::to_string(getpid());
 #endif
   handle += "_";
-  // use global counter, not random device ?
   handle += std::to_string(rd());
   return handle;
 }
@@ -49,50 +48,41 @@ struct CountInfo {
 
 void AllocateMemoryMap(std::string filename, int flags, size_t size,
                        void **map_ptr_, int *fd_) {
-  VLOG(6) << "flags:" << flags;
   // TODO(@ZHUI): support win32
   int file_flags = 0;
   int fd = -1;
   if (flags & MAPPED_SHAREDMEM) {
-    file_flags = O_RDWR | O_CREAT;  // rw+c
+    file_flags = O_RDWR | O_CREAT;
   } else {
-    file_flags = O_RDONLY;  // rd only
+    file_flags = O_RDONLY;
   }
-  // stroge
   if (flags & MAPPED_EXCLUSIVE) {
-    file_flags |= O_EXCL;  // raise error if file exist
+    file_flags |= O_EXCL;
   }
   if (flags & MAPPED_NOCREATE) {
-    file_flags &= ~O_CREAT;  // no creat
+    file_flags &= ~O_CREAT;
   }
 
   if (!(flags & MAPPED_FROMFD)) {
     if (flags & MAPPED_SHAREDMEM) {
-      VLOG(6) << "shm_open";
       fd = shm_open(filename.c_str(), file_flags, (mode_t)0600);
-      VLOG(6) << "fd: " << fd << " error:" << (fd == -1);
       PADDLE_ENFORCE_NE(
           fd, -1,
           platform::errors::Unavailable(
               "File descriptor %s open failed, unable in read-write mode",
               filename.c_str()));
-
-      VLOG(6) << "fd: " << fd;
+      VLOG(6) << "shm_open: " << filename;
     }
   } else {
     fd = -1;
   }
 
-  VLOG(6) << "name: " << filename;
-  VLOG(6) << "fd: " << fd;
   PADDLE_ENFORCE_EQ(ftruncate(fd, size), 0,
                     platform::errors::Unavailable(
                         "Fruncate a file to a specified length failed!"));
 
-  /* map it */
   if (flags & MAPPED_SHAREDMEM) {
     *map_ptr_ = mmap(nullptr, size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
-    VLOG(6) << "mmap ptr: " << *map_ptr_ << " size: " << size;
   } else {
     *map_ptr_ = mmap(nullptr, size, PROT_READ | PROT_WRITE, MAP_PRIVATE, fd, 0);
   }
@@ -117,7 +107,6 @@ std::shared_ptr<MemoryMapAllocation> AllocateMemoryMapAllocation(
   int fd = -1;
   void *base_ptr = nullptr;
   AllocateMemoryMap(filename, flags, size, &base_ptr, &fd);
-  VLOG(6) << "base_ptr: " << base_ptr;
   return std::make_shared<MemoryMapAllocation>(base_ptr, size, filename, flags,
                                                fd);
 }
@@ -128,7 +117,6 @@ AllocateRefcountedMemoryMapAllocation(std::string filename, int flags,
   int fd = -1;
   void *base_ptr = nullptr;
   AllocateMemoryMap(filename, flags, size + mmap_alignment, &base_ptr, &fd);
-  VLOG(6) << "base_ptr: " << base_ptr;
   void *aliged_base_ptr =
       static_cast<void *>(static_cast<char *>(base_ptr) + mmap_alignment);
   return std::make_shared<RefcountedMemoryMapAllocation>(aliged_base_ptr, size,
@@ -144,7 +132,6 @@ RefcountedMemoryMapAllocation::RefcountedMemoryMapAllocation(
 }
 
 void MemoryMapAllocation::close() {
-  VLOG(6) << "MemoryMapAllocation::close";
   if (closed_) {
     return;
   }
@@ -171,7 +158,6 @@ void MemoryMapAllocation::close() {
           platform::errors::Unavailable(
               "could not unlink the shared memory file ", ipc_name_, " : ",
               strerror(errno), " (", errno, ")"));
-      VLOG(6) << "shm_unlink";
     }
   }
 }
@@ -202,11 +188,9 @@ void RefcountedMemoryMapAllocation::initializeRefercount() {
   } else {
     info->refcount++;
   }
-  VLOG(6) << "file: " << ipc_name_ << " refcount: " << info->refcount;
 }
 
 void RefcountedMemoryMapAllocation::close() {
-  VLOG(6) << "RefcountedMemoryMapAllocation::close";
   if (closed_) {
     return;
   }
@@ -218,12 +202,9 @@ void RefcountedMemoryMapAllocation::close() {
         shm_unlink(ipc_name_.c_str()), -1,
         platform::errors::Unavailable(
             "could not unlink the shared memory file ", ipc_name_));
-    VLOG(6) << "shm_unlink";
+    VLOG(6) << "shm_unlink file: " << ipc_name;
   }
 
-  VLOG(6) << "file: " << ipc_name_ << " refcount: " << info->refcount;
-  VLOG(6) << "munmap map_ptr_: " << map_ptr_;
-  VLOG(6) << "munmap map_size_: " << map_size_;
   PADDLE_ENFORCE_NE(
       munmap(map_ptr_, map_size_), -1,
       platform::errors::Unavailable("could not unmap the shared memory file: ",

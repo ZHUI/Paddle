@@ -1216,7 +1216,6 @@ PYBIND11_MODULE(core_noavx, m) {
        )DOC")
       .def("_share_cuda",
            [](framework::Tensor self) {
-             VLOG(6) << "Share cuda start";
              if (!self.IsInitialized() || self.numel() == 0)
                throw std::runtime_error(
                    "Tensor not initialized or numel is 0.  could not pass "
@@ -1234,10 +1233,6 @@ PYBIND11_MODULE(core_noavx, m) {
              ptrdiff_t offset_bytes = reinterpret_cast<char *>(holder->ptr()) -
                                       reinterpret_cast<char *>(base_ptr);
 
-             VLOG(6) << "send offset_bytes:\t" << offset_bytes;
-             VLOG(6) << "Tensor BasePtr:"
-                     << "\t" << base_ptr;
-
              cudaIpcMemHandle_t handle;
              PADDLE_ENFORCE_GPU_SUCCESS(cudaIpcGetMemHandle(&handle, base_ptr));
 
@@ -1254,7 +1249,6 @@ PYBIND11_MODULE(core_noavx, m) {
              size_t data_size =
                  self.numel() * framework::SizeOfType(self.type());
 
-             VLOG(6) << "Cast cuda tensor to ipc over";
              return py::make_tuple(_handle, (py::size_t)offset_bytes, data_size,
                                    type_idx, vectorize(self.dims()), self.lod(),
                                    device_id);
@@ -1276,23 +1270,19 @@ PYBIND11_MODULE(core_noavx, m) {
       )DOC")
       .def("_new_shared_cuda",
            [](py::tuple t) {
-             VLOG(6) << "New shared cuda start";
-
              if (t.size() != 7)
                throw std::runtime_error(
                    "Invalid Tensor meta info for shared cuda tensor!");
 
              // 1. Create a new C++ instance
              framework::Tensor tensor;
+
              // 2. Rebuild Allocation from handle
              const std::string &handle = t[0].cast<std::string>();
              ptrdiff_t offset_bytes = (ptrdiff_t)t[1].cast<int64_t>();
-             VLOG(6) << "recv offset_bytes:\t" << offset_bytes;
              auto device_id = t[6].cast<int>();
-             VLOG(6) << "get ipc base ptr";
              auto base_ptr = memory::allocation::GetIpcBasePtr(handle);
              size_t size = t[2].cast<size_t>();
-             VLOG(6) << "constructing shared holder";
              void *dev = base_ptr.get();
              dev = reinterpret_cast<char *>(dev) + offset_bytes;
 
@@ -1307,7 +1297,6 @@ PYBIND11_MODULE(core_noavx, m) {
              tensor.Resize(make_ddim(t[4].cast<std::vector<int>>()));
              tensor.set_lod(t[5].cast<framework::LoD>());
 
-             VLOG(6) << "cuda tensor reconstructed!";
              return tensor;
            },
            R"DOC(
@@ -1347,9 +1336,6 @@ PYBIND11_MODULE(core_noavx, m) {
                  holder.get());
              // If the tensor is not shared, allocate memory map allocation.
              if (mmap_allocation == nullptr) {
-               VLOG(6) << "Tensor not in shared memory, try to move it to "
-                          "shared memory.";
-
                void *data_ptr = self.data();
                size_t data_size =
                    self.numel() * framework::SizeOfType(self.type());
@@ -1410,8 +1396,6 @@ PYBIND11_MODULE(core_noavx, m) {
              auto shared_holder =
                  memory::allocation::AllocateRefcountedMemoryMapAllocation(
                      ipc_name, flags, size);
-
-             VLOG(6) << "Tensor ipc name: " << ipc_name;
 
              // 3. Rebuild Tensor
              tensor.ResetHolderWithType(
