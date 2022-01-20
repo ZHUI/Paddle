@@ -12,44 +12,104 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
+import gc
+import sys
 import unittest
+import time
 import paddle
 import paddle.multiprocessing as mp
-paddle.set_device("cpu")
+
+REPEAT = 20
+HAS_SHM_FILES = os.path.isdir('/dev/shm')
 
 
 def fill_tensor(queue, event):
-    paddle.set_device("cpu")
     data = queue.get()
-    data[0][:] = 5
-    data[1][:] = 5
+    with paddle.no_grad():
+        data[0][:] = 5
+        data[1][:] = 5
+
     event.set()
 
 
 def send_tensor(queue, event, device, dtype):
     tensor = paddle.ones([5, 5], dtype=dtype)
-    tensor = tensor.cpu()
     queue.put(tensor)
     queue.put(tensor)
     event.wait()
+
+
+class leak_checker(object):
+    def __init__(self, test_case):
+        self.checked_pids = [os.getpid()]
+        self.test_case = test_case
+
+    def __enter__(self):
+        self.next_fds = self._get_next_fds(10)
+        return self
+
+    def __exit__(self, *args):
+        if args[0] is None:
+            self.test_case.assertFalse(self.has_shm_files())
+        return False
+
+    def check_pid(self, pid):
+        self.checked_pids.append(pid)
+
+    def _get_next_fds(self, n=1):
+        fds = [os.dup(0) for i in range(n)]
+        for fd in fds:
+            os.close(fd)
+        return fds
+
+    def has_shm_files(self, wait=True):
+        if not HAS_SHM_FILES:
+            return False
+        result = self._has_shm_files()
+        if result and wait:
+            time.sleep(0.5)
+            return self._has_shm_files()
+        return result
+
+    def _has_shm_files(self):
+        gc.collect()
+        names = ['paddle_' + str(pid) for pid in self.checked_pids]
+        for filename in os.listdir('/dev/shm'):
+            for name in names:
+                if filename.startswith(name):
+                    print("have", filename)
+                    return True
+        return False
 
 
 class TestMultiprocessingBase(unittest.TestCase):
     def get_tensor(self, device="cpu"):
         self.device = device.lower()
         place = None
-        if self.device == "cpu":
-            place = paddle.CPUPlace()
-        elif self.device == "gpu":
-            place = paddle.CUDAPlace()
         tensor = paddle.zeros([5, 5], dtype="float32")
-        tensor = tensor.cpu()
         return tensor
 
-    def _test_sharing(self, ctx=mp, device='cpu', dtype="float32", repeat=1):
+    def get_parameter(self):
+        w = paddle.nn.Layer().create_parameter(
+            [10, 10],
+            default_initializer=paddle.nn.initializer.Constant(value=0.0))
+        return w
+
+    def _test_sharing(self,
+                      ctx=mp,
+                      device='cpu',
+                      dtype="float32",
+                      repeat=1,
+                      param=False):
         def test_fill():
-            x = self.get_tensor()
-            y = x[:, 1]
+            if param:
+                x = self.get_parameter()
+                y = (x[:, 1]).detach()
+            else:
+                x = self.get_tensor()
+                y = x[:, 1]
+
             data = [x, y]
 
             queue = ctx.Queue()
@@ -58,6 +118,7 @@ class TestMultiprocessingBase(unittest.TestCase):
 
             process = ctx.Process(target=fill_tensor, args=(queue, event))
             process.daemon = True
+            lc.check_pid(process.pid)
             process.start()
 
             event.wait(30)
@@ -66,7 +127,7 @@ class TestMultiprocessingBase(unittest.TestCase):
             self.assertTrue(data[0].equal(5).all())
             self.assertTrue(data[1].equal(5).all())
 
-            process.join(1)
+            process.join(1 if device != "gpu" else 10)
             self.assertFalse(process.is_alive())
 
         def test_receive():
@@ -76,6 +137,7 @@ class TestMultiprocessingBase(unittest.TestCase):
             process = ctx.Process(
                 target=send_tensor, args=(queue, event, device, dtype))
             process.daemon = True
+            lc.check_pid(process.pid)
             process.start()
 
             t1 = queue.get()
@@ -84,51 +146,33 @@ class TestMultiprocessingBase(unittest.TestCase):
             del t1, t2
 
             event.set()
-            process.join(1)
+            process.join(1 if device != "gpu" else 10)
             self.assertFalse(process.is_alive())
 
-        for _ in range(repeat):
-            test_fill()
-            test_receive()
+        with leak_checker(self) as lc:
+            for _ in range(repeat):
+                test_fill()
+                test_receive()
 
 
 class TestMultiprocessingCpu(TestMultiprocessingBase):
     def test_pass_tensor(self):
-        self._test_sharing()
-
-    def test_pass_varbase(self):
-        # TODO: check stop gradient
-        pass
+        paddle.set_device("cpu")
+        self._test_sharing(repeat=REPEAT)
 
     def test_pass_parambase(self):
-        pass
-
-    def test_pass_lodtensor(self):
-        # TODO: set lod, and check lod info
-        pass
-
-    def test_pass_variable(self):
-        pass
+        paddle.set_device("cpu")
+        self._test_sharing(repeat=1, param=True)
 
     def test_pass_empty(self):
-        pass
+        paddle.set_device("cpu")
 
 
-# class TestMultiprocessingGpu(TestMultiprocessingBase):
-#     def test_pass_tensor(self):
-#         pass
-# 
-#     def test_pass_varbase(self):
-#         pass
-# 
-#     def test_pass_parambase(self):
-#         pass
-# 
-#     def test_pass_lodtensor(self):
-#         pass
-# 
-#     def test_pass_variable(self):
-#         pass
+class TestMultiprocessingGpu(TestMultiprocessingBase):
+    def test_pass_tensor(self):
+        paddle.set_device("gpu")
+        self._test_sharing(mp.get_context("spawn"), "gpu")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -21,6 +21,7 @@ import os
 import sys
 import warnings
 import math
+import copy
 import threading
 import multiprocessing
 from multiprocessing.util import register_after_fork
@@ -87,22 +88,17 @@ def reduce_event():
 
 
 def rebuild_tensor(cls, lodtensor, metadata):
-    size, stop_gradient = metadata
-    # TODO: the place the generate by GetCurrentTracer, show be set by lod tensor place
-    # https://github.com/PaddlePaddle/Paddle/blob/develop/paddle/fluid/pybind/imperative.cc#L265
-    # t = paddle.fluid.core.VarBase(lodtensor)
-
-    t = paddle.fluid.core.VarBase()
-    t.value().get_tensor()._share_data_with(lodtensor)
-
     if cls == paddle.fluid.framework.ParamBase:
-        # TODO: Add ParamBase init with lodtensor
-        raise NotImplementedError(
-            "paddle.fluid.framework.ParamBase init with VarBase")
-        #t = paddle.nn.parameter.Parameter(t, trainable=not stop_gradient)
+        tensor = paddle.fluid.framework.ParamBase(lodtensor.shape(),
+                                                  lodtensor._dtype(),
+                                                  **metadata)
+        tensor.value().get_tensor()._share_data_with(lodtensor)
     else:
-        t.stop_gradient = stop_gradient
-    return t
+        size, stop_gradient = metadata
+        tensor = paddle.fluid.core.VarBase()
+        tensor.value().get_tensor()._share_data_with(lodtensor)
+        tensor.stop_gradient = stop_gradient
+    return tensor
 
 
 def reduce_tensor(tensor):
@@ -110,19 +106,21 @@ def reduce_tensor(tensor):
 
     if not tensor.stop_gradient and not tensor.is_leaf:
         raise RuntimeError(
-            "Refusing to serialize non-leaf tensor which not stop_gradient, you can deteach it!"
+            "Refusing to serialize non-leaf tensor which not stop_gradient, you can detach it!"
         )
     # TODO: add serializing name and  hooks check
     if tensor.place.is_cpu_place() or tensor.place.is_gpu_place(
     ) or tensor.place.is_cuda_pinned_place():
-        metadata = (tensor.size, tensor.stop_gradient)
+        if type(tensor) == paddle.fluid.framework.ParamBase:
+            metadata = copy.deepcopy(tensor.__dict__)
+        else:
+            metadata = (tensor.size, tensor.stop_gradient)
+
         return (rebuild_tensor, (type(tensor), lodtensor, metadata))
     else:
         raise ValueError(
             "Only support tensors of CPU/CUDA/CUDAPinned Place, Not support %s for now!"
             % tensor.place)
-
-    # Don't serialize hooks
 
 
 def rebuild_lodtensor_filename(cls, ipc_name, size, type_idx, dims, lod):
@@ -136,6 +134,11 @@ def rebuild_cuda_tensor(cls, handle, offset_bytes, size, type_idx, dims, lod,
     if cache_tensor is None:
         lodtensor = cls._new_shared_cuda(
             (handle, offset_bytes, size, type_idx, dims, lod, device_idx))
+        # We only cache cuda shared tensor here.
+        # The opening cost of cudaIpcMemoryHandle is very high.
+        # Since we cache the recived tensor directly, 
+        # The sender may reallocate the tensor space, 
+        # you should manualy maintian the lifecycle of ipc tensor
         shared_cache[(handle, offset_bytes)] = lodtensor
     else:
         lodtensor = paddle.fluid.core.LoDTensor()
@@ -181,6 +184,5 @@ def init_reductions():
 
     ForkingPickler.register(paddle.Tensor, reduce_tensor)
     ForkingPickler.register(paddle.fluid.core.VarBase, reduce_tensor)
-    # TODO: support Variable ParamBase
-    # ForkingPickler.register(paddle.fluid.core.Variable, reduce_variable)
+    ForkingPickler.register(paddle.fluid.framework.ParamBase, reduce_tensor)
     ForkingPickler.register(paddle.fluid.core.LoDTensor, reduce_lodtensor)
