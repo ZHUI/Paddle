@@ -29,6 +29,207 @@ namespace paddle {
 namespace memory {
 namespace allocation {
 
+std::string GetIPCName() {
+  static std::random_device rd;
+  std::string handle = "/paddle_";
+#ifdef _WIN32
+  handle += std::to_string(GetCurrentProcessId());
+#else
+  handle += std::to_string(getpid());
+#endif
+  handle += "_";
+  // use global counter, not random device ?
+  handle += std::to_string(rd());
+  return handle;
+}
+
+struct CountInfo {
+  std::atomic<int> refcount;
+};
+
+void AllocateMemoryMap(std::string filename, int flags, size_t size,
+                       void **map_ptr_, int *fd_) {
+  VLOG(6) << "flags:" << flags;
+  // TODO(@ZHUI): support win32
+  int file_flags = 0;
+  int fd = -1;
+  if (flags & MAPPED_SHAREDMEM) {
+    file_flags = O_RDWR | O_CREAT;  // rw+c
+  } else {
+    file_flags = O_RDONLY;  // rd only
+  }
+  // stroge
+  if (flags & MAPPED_EXCLUSIVE) {
+    file_flags |= O_EXCL;  // raise error if file exist
+  }
+  if (flags & MAPPED_NOCREATE) {
+    file_flags &= ~O_CREAT;  // no creat
+  }
+
+  if (!(flags & MAPPED_FROMFD)) {
+    if (flags & MAPPED_SHAREDMEM) {
+      VLOG(6) << "shm_open";
+      fd = shm_open(filename.c_str(), file_flags, (mode_t)0600);
+      VLOG(6) << "fd: " << fd << " error:" << (fd == -1);
+      PADDLE_ENFORCE_NE(
+          fd, -1,
+          platform::errors::Unavailable(
+              "File descriptor %s open failed, unable in read-write mode",
+              filename.c_str()));
+
+      VLOG(6) << "fd: " << fd;
+    }
+  } else {
+    fd = -1;
+  }
+
+  VLOG(6) << "name: " << filename;
+  VLOG(6) << "fd: " << fd;
+  PADDLE_ENFORCE_EQ(ftruncate(fd, size), 0,
+                    platform::errors::Unavailable(
+                        "Fruncate a file to a specified length failed!"));
+
+  /* map it */
+  if (flags & MAPPED_SHAREDMEM) {
+    *map_ptr_ = mmap(nullptr, size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+    VLOG(6) << "mmap ptr: " << *map_ptr_ << " size: " << size;
+  } else {
+    *map_ptr_ = mmap(nullptr, size, PROT_READ | PROT_WRITE, MAP_PRIVATE, fd, 0);
+  }
+
+  PADDLE_ENFORCE_NE(*map_ptr_, MAP_FAILED,
+                    platform::errors::Unavailable(
+                        "Memory map failed when create shared memory."));
+
+  if (flags & MAPPED_KEEPFD) {
+    *fd_ = fd;
+  } else {
+    PADDLE_ENFORCE_NE(::close(fd), -1,
+                      platform::errors::Unavailable(
+                          false, "Error closing file <", filename, ">"));
+
+    *fd_ = -1;
+  }
+}
+
+std::shared_ptr<MemoryMapAllocation> AllocateMemoryMapAllocation(
+    std::string filename, int flags, size_t size) {
+  int fd = -1;
+  void *base_ptr = nullptr;
+  AllocateMemoryMap(filename, flags, size, &base_ptr, &fd);
+  VLOG(6) << "base_ptr: " << base_ptr;
+  return std::make_shared<MemoryMapAllocation>(base_ptr, size, filename, flags,
+                                               fd);
+}
+
+std::shared_ptr<RefcountedMemoryMapAllocation>
+AllocateRefcountedMemoryMapAllocation(std::string filename, int flags,
+                                      size_t size) {
+  int fd = -1;
+  void *base_ptr = nullptr;
+  AllocateMemoryMap(filename, flags, size + mmap_alignment, &base_ptr, &fd);
+  VLOG(6) << "base_ptr: " << base_ptr;
+  void *aliged_base_ptr =
+      static_cast<void *>(static_cast<char *>(base_ptr) + mmap_alignment);
+  return std::make_shared<RefcountedMemoryMapAllocation>(aliged_base_ptr, size,
+                                                         filename, flags, fd);
+}
+
+RefcountedMemoryMapAllocation::RefcountedMemoryMapAllocation(
+    void *ptr, size_t size, std::string ipc_name, int fd, int flags)
+    : MemoryMapAllocation(ptr, size, ipc_name, fd, flags) {
+  // must reset base ptr first.
+  resetBaseptr();
+  initializeRefercount();
+}
+
+void MemoryMapAllocation::close() {
+  VLOG(6) << "MemoryMapAllocation::close";
+  if (closed_) {
+    return;
+  }
+  closed_ = true;
+  if (map_ptr_ == nullptr) {
+    return;
+  }
+  if (flags_ & MAPPED_KEEPFD) {
+    PADDLE_ENFORCE_NE(
+        ::close(fd_), -1,
+        platform::errors::Unavailable("could not close file descriptor ", fd_,
+                                      " :", strerror(errno), " (", errno, ")"));
+  }
+
+  PADDLE_ENFORCE_NE(
+      munmap(map_ptr_, map_size_), -1,
+      platform::errors::Unavailable("could not unmap the shared memory file: ",
+                                    strerror(errno), " (", errno, ")"));
+
+  if (!(flags_ & (MAPPED_FROMFD | MAPPED_UNLINK))) {
+    if (flags_ & MAPPED_SHAREDMEM) {
+      PADDLE_ENFORCE_NE(
+          shm_unlink(ipc_name_.c_str()), -1,
+          platform::errors::Unavailable(
+              "could not unlink the shared memory file ", ipc_name_, " : ",
+              strerror(errno), " (", errno, ")"));
+      VLOG(6) << "shm_unlink";
+    }
+  }
+}
+
+MemoryMapAllocation::~MemoryMapAllocation() { close(); }
+
+void RefcountedMemoryMapAllocation::incref() {
+  CountInfo *info = static_cast<CountInfo *>(map_ptr_);
+  ++info->refcount;
+}
+
+int RefcountedMemoryMapAllocation::decref() {
+  CountInfo *info = static_cast<CountInfo *>(map_ptr_);
+  return --info->refcount == 0;
+}
+
+void RefcountedMemoryMapAllocation::resetBaseptr() {
+  map_ptr_ =
+      static_cast<void *>(static_cast<char *>(map_ptr_) - mmap_alignment);
+  map_size_ = map_size_ + mmap_alignment;
+}
+
+void RefcountedMemoryMapAllocation::initializeRefercount() {
+  CountInfo *info = reinterpret_cast<CountInfo *>(map_ptr_);
+
+  if (flags_ & MAPPED_EXCLUSIVE) {
+    new (&info->refcount) std::atomic<int>(1);
+  } else {
+    info->refcount++;
+  }
+  VLOG(6) << "file: " << ipc_name_ << " refcount: " << info->refcount;
+}
+
+void RefcountedMemoryMapAllocation::close() {
+  VLOG(6) << "RefcountedMemoryMapAllocation::close";
+  if (closed_) {
+    return;
+  }
+  closed_ = true;
+  void *data = map_ptr_;
+  CountInfo *info = reinterpret_cast<CountInfo *>(data);
+  if (--info->refcount == 0) {
+    PADDLE_ENFORCE_NE(
+        shm_unlink(ipc_name_.c_str()), -1,
+        platform::errors::Unavailable(
+            "could not unlink the shared memory file ", ipc_name_));
+    VLOG(6) << "shm_unlink";
+  }
+
+  VLOG(6) << "file: " << ipc_name_ << " refcount: " << info->refcount;
+  VLOG(6) << "munmap map_ptr_: " << map_ptr_;
+  VLOG(6) << "munmap map_size_: " << map_size_;
+  PADDLE_ENFORCE_NE(
+      munmap(map_ptr_, map_size_), -1,
+      platform::errors::Unavailable("could not unmap the shared memory file: ",
+                                    strerror(errno), " (", errno, ")"));
+}
+
 MemoryMapWriterAllocation::~MemoryMapWriterAllocation() {
   PADDLE_ENFORCE_NE(
       munmap(this->ptr(), this->size()), -1,
@@ -44,30 +245,30 @@ MemoryMapReaderAllocation::~MemoryMapReaderAllocation() {
   /* Here we do not pay attention to the result of shm_unlink,
      because the memory mapped file may have been cleared due to the
      MemoryMapFdSet::Clear() */
+
+  // Code of DataLoader subprocess:
+  //
+  //    core._array_to_share_memory_tensor(b)
+  //    out_queue.put((idx, tensor_list, structure))
+  //    core._remove_tensor_list_mmap_fds(tensor_list)
+
+  /* If the tensor in already in the send queue, the tensor will be
+   * deconstructed by the function. If the tensor not send yet, it
+   * will be cleared by MemoryMapFdSet::Clear().
+   * If the `_remove_tensor_list_mmap_fds` have be interrupted, the
+   * tensor will be cleared by both methods.
+   * */
+
   shm_unlink(this->ipc_name().c_str());
   MemoryMapFdSet::Instance().Remove(this->ipc_name());
   VLOG(3) << "~MemoryMapReaderAllocation: " << this->ipc_name();
-}
-
-std::string GetIPCName() {
-  static std::random_device rd;
-  std::string handle = "/paddle_";
-#ifdef _WIN32
-  handle += std::to_string(GetCurrentProcessId());
-#else
-  handle += std::to_string(getpid());
-#endif
-  handle += "_";
-  handle += std::to_string(rd());
-  return handle;
 }
 
 std::shared_ptr<MemoryMapWriterAllocation> AllocateMemoryMapWriterAllocation(
     size_t size) {
   const std::string &ipc_name = GetIPCName();
   int flags = O_RDWR | O_CREAT;
-
-  int fd = shm_open(ipc_name.c_str(), flags, 0644);
+  int fd = shm_open(ipc_name.c_str(), flags, 0600);
   PADDLE_ENFORCE_NE(
       fd, -1, platform::errors::Unavailable("File descriptor %s open failed",
                                             ipc_name.c_str()));
@@ -86,12 +287,16 @@ std::shared_ptr<MemoryMapWriterAllocation> AllocateMemoryMapWriterAllocation(
 
 std::shared_ptr<MemoryMapReaderAllocation> RebuildMemoryMapReaderAllocation(
     const std::string &ipc_name, size_t size) {
-  int fd = shm_open(ipc_name.c_str(), O_RDONLY, 0644);
+  // TODO(@ZHUI): support win32
+  int flags = O_RDWR | O_CREAT;
+  flags &= ~O_CREAT;
+
+  int fd = shm_open(ipc_name.c_str(), flags, 0600);
   PADDLE_ENFORCE_NE(
       fd, -1, platform::errors::Unavailable("File descriptor %s open failed",
                                             ipc_name.c_str()));
-
-  void *ptr = mmap(NULL, size, PROT_READ, MAP_SHARED, fd, 0);
+  // pass
+  void *ptr = mmap(nullptr, size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
   PADDLE_ENFORCE_NE(ptr, MAP_FAILED,
                     platform::errors::Unavailable(
                         "Memory map failed when rebuild shared memory."));
