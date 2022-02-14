@@ -539,9 +539,8 @@ class Layer(object):
 
         """
         ret = [
-            param
-            for _, param in self.named_parameters(
-                include_sublayers=include_sublayers)
+            param for _, param in
+            self.named_parameters(include_sublayers=include_sublayers)
         ]
         return ret
 
@@ -796,9 +795,8 @@ class Layer(object):
 
         """
         ret = [
-            buffer
-            for _, buffer in self.named_buffers(
-                include_sublayers=include_sublayers)
+            buffer for _, buffer in
+            self.named_buffers(include_sublayers=include_sublayers)
         ]
         return ret
 
@@ -1281,7 +1279,7 @@ class Layer(object):
                                    include_sublayers=True,
                                    structured_name_prefix=""):
         """
-        The difference from state_dict() is that state_dict_hook will not be called, 
+        The difference from state_dict() is that state_dict_hook will not be called,
         but the original types of parameters and buffers will be maintained.
         """
         if destination is None:
@@ -1497,6 +1495,26 @@ class Layer(object):
             for param, state in matched_param_state:
                 _set_var(param, state)
 
+    def share_memory(self):
+        '''
+        Move parameters to shared memory
+
+        It will take no effect for tensor in shared memory or cuda tensor.
+        '''
+
+        def _share_memory(layer):
+            for key, param in layer._parameters.items():
+                if param is None:
+                    continue
+
+                with no_grad():
+                    param_applied = param.share_memory_()
+
+            for key, buf in layer._buffers.items():
+                layer._buffers[key] = buf.share_memory_()
+
+        self.apply(_share_memory)
+
     def to(self, device=None, dtype=None, blocking=None):
         '''
         Cast the parameters and buffers of Layer by the give device, dtype and blocking.
@@ -1510,7 +1528,7 @@ class Layer(object):
 
             blocking(bool|None, optional): If False and the source is in pinned memory, the copy will be
               asynchronous with respect to the host. Otherwise, the argument has no effect. If None, the blocking is set True. Default: None.
-            
+
         Returns:
             self
 
@@ -1588,7 +1606,7 @@ class Layer(object):
 
             blocking(bool|None, optional): If False and the source is in pinned memory, the copy will be
               asynchronous with respect to the host. Otherwise, the argument has no effect. If None, the blocking is set True. Default: None.
-            
+
             include_sublayers(bool|True, optional): If True, deal with self and all sublayers parameters and buffers, if not only deal with self parameters and buffers. Default: True.
 
         Returns:
